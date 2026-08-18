@@ -1,0 +1,27 @@
+# Vercel builds the Vite frontend only. Everything below is local tooling,
+# backend source, or generated output that must not ship in the deployment
+# artifact. Migrations and Edge Functions stay in Git (they are version
+# controlled and deployed with the Supabase CLI), they simply are not part of
+# the browser build.
+
+# Local tooling
+.venv/
+.ai/
+*.log
+
+# Secrets (never uploaded; .env.example is a placeholder template and is kept)
+.env
+.env.*
+!.env.example
+
+# Supabase backend — deployed via the Supabase CLI, not Vercel
+supabase/
+
+# Build output (Vercel builds this itself)
+dist/
+node_modules/
+
+# Agent/protocol docs
+AGENTS.md
+CODEX.md
+CLAUDE.md

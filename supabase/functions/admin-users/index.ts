@@ -1,9 +1,70 @@
 import { createClient, type SupabaseClient, type User } from "npm:@supabase/supabase-js@2";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+/* Browser access is restricted to an explicit allowlist supplied by the
+   ALLOWED_ORIGINS Edge Function secret (comma separated). Set it per
+   environment, for example:
+
+     supabase secrets set ALLOWED_ORIGINS="https://ams.example.com,https://*.vercel.app"
+
+   A pattern may be an exact origin or a single wildcard host label such as
+   "https://*.vercel.app", which matches preview deployments but never a bare
+   apex domain or a look-alike suffix. When the secret is unset only local
+   development origins are accepted, so a misconfigured deployment fails closed
+   instead of falling back to "*". Requests that carry no Origin header at all
+   are server-to-server callers, not browsers, and are left untouched. */
+const DEV_ORIGINS = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:4173",
+  "http://127.0.0.1:4173",
+];
+
+const BASE_CORS_HEADERS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Max-Age": "86400",
+  "Vary": "Origin",
+};
+
+const trimSlashes = (value: string) => value.trim().replace(/\/+$/, "");
+
+const allowedOriginPatterns = () => {
+  const configured = (Deno.env.get("ALLOWED_ORIGINS") ?? "")
+    .split(",")
+    .map(trimSlashes)
+    .filter(Boolean);
+  return configured.length > 0 ? configured : DEV_ORIGINS;
+};
+
+const splitOrigin = (value: string) => {
+  const match = /^(https?):\/\/(.+)$/i.exec(value);
+  return match ? { scheme: match[1].toLowerCase(), host: match[2].toLowerCase() } : null;
+};
+
+const originMatches = (pattern: string, origin: string) => {
+  if (pattern === origin) return true;
+  const p = splitOrigin(pattern);
+  const o = splitOrigin(origin);
+  if (!p || !o || p.scheme !== o.scheme) return false;
+  if (!p.host.startsWith("*.")) return false;
+  const suffix = p.host.slice(1);
+  return o.host.endsWith(suffix) && o.host.length > suffix.length;
+};
+
+const isAllowedOrigin = (origin: string) =>
+  allowedOriginPatterns().some((pattern) => originMatches(pattern, trimSlashes(origin)));
+
+/* Returns the CORS headers for this request, and whether a browser origin was
+   presented but rejected. Allow-Origin is only ever echoed for an origin that
+   matched the allowlist; it is never reflected blindly. */
+const resolveCors = (request: Request) => {
+  const origin = request.headers.get("Origin");
+  if (!origin) return { headers: { ...BASE_CORS_HEADERS }, rejected: false };
+  if (!isAllowedOrigin(origin)) return { headers: { ...BASE_CORS_HEADERS }, rejected: true };
+  return {
+    headers: { ...BASE_CORS_HEADERS, "Access-Control-Allow-Origin": origin },
+    rejected: false,
+  };
 };
 
 type RequestBody = {
@@ -34,10 +95,10 @@ type ProfileRow = {
   updated_at: string;
 };
 
-const json = (body: unknown, status = 200) =>
+const json = (body: unknown, status = 200, cors: Record<string, string> = BASE_CORS_HEADERS) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: { ...cors, "Content-Type": "application/json" },
   });
 
 const requireEnv = (name: string) => {
@@ -173,8 +234,10 @@ async function recordAuthEvent(
 }
 
 Deno.serve(async (request) => {
-  if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+  const { headers: cors, rejected } = resolveCors(request);
+  if (rejected) return json({ error: "Origin is not allowed" }, 403, cors);
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+  if (request.method !== "POST") return json({ error: "Method not allowed" }, 405, cors);
 
   try {
     const supabaseUrl = requireEnv("SUPABASE_URL");
@@ -182,7 +245,7 @@ Deno.serve(async (request) => {
     const anonKey = requireEnv("SUPABASE_ANON_KEY");
     const authorization = request.headers.get("Authorization") ?? "";
     const bearerToken = authorization.replace(/^Bearer\s+/i, "").trim();
-    if (!bearerToken) return json({ error: "Missing Authorization header" }, 401);
+    if (!bearerToken) return json({ error: "Missing Authorization header" }, 401, cors);
 
     const service = createClient(supabaseUrl, serviceRoleKey, {
       auth: { autoRefreshToken: false, persistSession: false },
@@ -190,14 +253,14 @@ Deno.serve(async (request) => {
     const caller = await assertSuperAdmin(service, bearerToken);
     const body = (await request.json()) as RequestBody;
 
-    if (body.action === "list") return json(await listUsers(service));
+    if (body.action === "list") return json(await listUsers(service), 200, cors);
 
     if (body.action === "create") {
       const email = cleanText(body.email).toLowerCase();
       const password = cleanText(body.password);
       const fullName = cleanText(body.fullName);
       if (!email || !fullName || password.length < 8) {
-        return json({ error: "Email, full name, and a password of at least 8 characters are required" }, 400);
+        return json({ error: "Email, full name, and a password of at least 8 characters are required" }, 400, cors);
       }
 
       const { data: created, error: createError } = await service.auth.admin.createUser({
@@ -217,12 +280,12 @@ Deno.serve(async (request) => {
         throw accessError;
       }
       await recordAuthEvent(service, caller.id, created.user.id, "auth_account_created", null, { email });
-      return json({ userId: created.user.id }, 201);
+      return json({ userId: created.user.id }, 201, cors);
     }
 
     if (body.action === "update") {
       const userId = cleanText(body.userId);
-      if (!userId) return json({ error: "User id is required" }, 400);
+      if (!userId) return json({ error: "User id is required" }, 400, cors);
 
       const { data: previous, error: previousError } = await service.auth.admin.getUserById(userId);
       if (previousError || !previous.user) throw previousError ?? new Error("User not found");
@@ -265,13 +328,13 @@ Deno.serve(async (request) => {
           { email, fullName },
         );
       }
-      return json({ userId });
+      return json({ userId }, 200, cors);
     }
 
     if (body.action === "send_recovery") {
       const userId = cleanText(body.userId);
       const email = cleanText(body.email).toLowerCase();
-      if (!userId || !email) return json({ error: "User id and email are required" }, 400);
+      if (!userId || !email) return json({ error: "User id and email are required" }, 400, cors);
 
       const publicAuth = createClient(supabaseUrl, anonKey, {
         auth: { autoRefreshToken: false, persistSession: false },
@@ -280,15 +343,15 @@ Deno.serve(async (request) => {
       const { error } = await publicAuth.auth.resetPasswordForEmail(email, { redirectTo });
       if (error) throw error;
       await recordAuthEvent(service, caller.id, userId, "password_recovery_requested", null, { email });
-      return json({ sent: true });
+      return json({ sent: true }, 200, cors);
     }
 
-    return json({ error: "Unsupported action" }, 400);
+    return json({ error: "Unsupported action" }, 400, cors);
   } catch (error) {
     if (error instanceof Response) {
-      return json({ error: await error.text() }, error.status);
+      return json({ error: await error.text() }, error.status, cors);
     }
     const message = error instanceof Error ? error.message : "Unexpected account-management error";
-    return json({ error: message }, 400);
+    return json({ error: message }, 400, cors);
   }
 });
