@@ -375,7 +375,10 @@ const availOf = (a, job) => {
 const ASSET_ACTIONS = {
   register: {
     title: "Register asset", submit: "Register asset",
-    fields: (a, x, v = {}) => [
+    fields: (a, x, v = {}) => {
+      const pid = String(v.project || "");
+      const proj = x.projects.find((pr) => pr.pid === pid);
+      return [
       { key: "tag", label: "Asset number", required: true, value: x.nextTag, mono: true },
       { key: "code", label: "Asset code (QR sticker)", mono: true, placeholder: "Scan or type the sticker code", hint: "The code printed on the QR sticker stuck to this asset" },
       { key: "company", label: "Company", type: "select", options: x.companyNames, required: x.companyNames.length > 0, hint: x.companyNames.length ? null : "Add companies under Settings first" },
@@ -384,12 +387,19 @@ const ASSET_ACTIONS = {
       { key: "serial", label: serialLabel(v.category), mono: true },
       ...vehicleFields(v.category),
       { key: "body", label: "Body number", mono: true, placeholder: "BN-14" },
-      { key: "location", label: "Address", required: true, placeholder: "Main office — 2F", list: x.locations },
+      { key: "project", label: "Project/Location", type: "select",
+        options: [NO_PROJECT, ...x.projects.map((pr) => pr.pid)],
+        hint: x.projects.length ? "The address is filled in from the list." : `No project/locations set up yet — use ${NO_PROJECT} or add them under Settings.` },
+      { key: "location", label: "Address", required: true, placeholder: "Main office — 2F", list: x.locations,
+        derivedOn: pid, derived: proj ? proj.location : "",
+        readOnly: !!proj,
+        hint: proj ? `Looked up from ${proj.pid}. Choose ${NO_PROJECT} if the asset is somewhere that isn't on the list.` : null },
       { key: "custodian", label: "Responsible person", required: true, list: x.people },
       { key: "acquired", label: "Date acquired", type: "date", value: today() },
       { key: "cost", label: "Acquisition cost", type: "number" },
       { key: "notes", label: "Notes", type: "textarea", full: true },
-    ],
+      ];
+    },
     validate: checkUnique,
   },
   edit: {
@@ -946,7 +956,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
         ...(["register", "edit"].includes(name) ? clearedVehicle(vals.category) : {}),
         companyId: companyIdFor(vals.company),
         categoryId: categoryIdFor(vals.category),
-        projectId: name === "transfer" ? projectIdFor(vals.project) : name === "edit" ? current.projectId : null,
+        projectId: ["register", "transfer"].includes(name) ? projectIdFor(vals.project) : name === "edit" ? current.projectId : null,
       };
       let result;
       if (name === "register") result = await runServerMutation(() => createAsset(scoped), "Asset registered in Supabase.");

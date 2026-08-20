@@ -50,19 +50,23 @@ export default function AuthGate({ children }) {
   const [error, setError] = useState('')
   const [recovering, setRecovering] = useState(false)
 
-  const loadAccess = useCallback(async (nextSession) => {
+  const loadAccess = useCallback(async (nextSession, { silent = false } = {}) => {
     setSession(nextSession)
-    setAccess(null)
-    setError('')
     if (!nextSession || !supabase) {
+      setAccess(null)
+      setError('')
       setLoading(false)
       return
     }
-    setLoading(true)
+    if (!silent) {
+      setAccess(null)
+      setError('')
+      setLoading(true)
+    }
     const { data, error: accessError } = await supabase.rpc('current_asset_user_access')
     if (accessError) setError(accessError.message)
     else setAccess(data)
-    setLoading(false)
+    if (!silent) setLoading(false)
   }, [])
 
   useEffect(() => {
@@ -70,12 +74,16 @@ export default function AuthGate({ children }) {
       return undefined
     }
     let live = true
-    supabase.auth.getSession().then(({ data }) => {
-      if (live) loadAccess(data.session)
-    })
+    // supabase-js can fire SIGNED_IN then INITIAL_SESSION for the same restored session on load; dedupe by token.
+    let lastToken = null
     const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (event === 'PASSWORD_RECOVERY') setRecovering(true)
-      if (live) window.setTimeout(() => loadAccess(nextSession), 0)
+      if (!live) return
+      const token = nextSession?.access_token ?? null
+      if (token && token === lastToken) return
+      const silent = event === 'TOKEN_REFRESHED' && lastToken !== null
+      lastToken = token
+      window.setTimeout(() => loadAccess(nextSession, { silent }), 0)
     })
     return () => {
       live = false
