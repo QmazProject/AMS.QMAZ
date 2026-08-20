@@ -103,7 +103,7 @@ export default function AuthGate({ children }) {
 
   if (!supabaseConfigured) return <SignIn configured={false} onSubmit={signIn} />
   if (recovering) return <PasswordRecovery onComplete={() => setRecovering(false)} />
-  if (loading) return <CenterMessage title="Opening your workspace">Checking account status and permissions…</CenterMessage>
+  if (loading) return null
   if (!session) return <SignIn onSubmit={signIn} error={error} />
   if (error) return <CenterMessage title="Access could not be verified" action={signOut}>{error}</CenterMessage>
   if (!access) return <CenterMessage title="Account access is not assigned" action={signOut}>A Super Admin must assign your role, companies, and asset groups before you can use the register.</CenterMessage>
