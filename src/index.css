@@ -1,9 +1,78 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------
+   Heavy-equipment scheme: black machine body, equipment-yellow markings.
+
+   The whole palette lives in this one block. Components reference the
+   tokens through var(), so re-skinning the product is a change here and
+   nowhere else - previously the same colours were spelled out as literals
+   across five files, which is why every restyle meant a sweep.
+
+   Yellow is the marking colour, not a surface and not the text: it carries
+   the brand, the active rail, the primary action and focus, exactly the way a
+   machine wears its decals. Black carries everything structural, and white
+   carries the information.
+   --------------------------------------------------------------------- */
 :root {
+  /* machine body */
+  --ams-bg: #0b0d0f;
+  --ams-rail: #0e1013;
+  --ams-surface: #14171b;
+  --ams-surface-2: #1b1f24;
+  --ams-well: #1e242c;
+  --ams-line: #2c323a;
+  --ams-line-soft: #1f242a;
+
+  /* equipment yellow */
+  --ams-yellow: #ffcd11;
+  --ams-yellow-hi: #ffe04d;
+  --ams-yellow-lift: #ffea85;
+  --ams-yellow-deep: #d9a800;
+  --ams-yellow-dim: #8a6f0c;
+  --ams-on-yellow: #0b0d0f;
+  /* Gold as ink rather than as a fill. On black it is the yellow itself; on
+     a white surface that measures 1.5:1, so the light scope swaps in a deep
+     gold and every component keeps asking for the same role. */
+  --ams-gold-ink: #ffcd11;
+
+  /* Information ramp. Neutral, faintly cooled so it settles against the black
+     without turning blue. Yellow is deliberately absent here: when the same
+     gold carried the brand, the headings, the values and the active state at
+     once, none of them could be made to stand out. Text is now white, and
+     yellow marks only what deserves attention.
+
+     Ratios are against the panel #14171b, where most reading happens. The old
+     label colour measured 3.65:1 at 11px and failed AA outright. */
+  --ams-text: #e9edf2;  /* primary   15.3:1 */
+  --ams-head: #ffffff;  /* headings  18.0:1 */
+  --ams-mute: #a8b2bf;  /* secondary  8.4:1 */
+  --ams-dim: #8c97a5;   /* labels     6.1:1 */
+
+  /* machine states, read off a gauge cluster */
+  --ams-ok: #7fd455;
+  --ams-warn: #ff8a1f;
+  --ams-alarm: #ff5247;
+  --ams-info: #55a8f0;
+  --ams-idle: #7e8794;
+
+  --ams-yellow-tint: rgba(255, 205, 17, 0.15);
+  --ams-ok-tint: rgba(127, 212, 85, 0.15);
+  --ams-warn-tint: rgba(255, 138, 31, 0.15);
+  --ams-alarm-tint: rgba(255, 82, 71, 0.15);
+  --ams-info-tint: rgba(85, 168, 240, 0.15);
+  --ams-idle-tint: rgba(126, 135, 148, 0.15);
+
+  /* caution striping - reserved for genuinely critical edges */
+  --ams-hazard: repeating-linear-gradient(
+    45deg,
+    #ffcd11 0 9px,
+    #0b0d0f 9px 18px
+  );
+
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  color: #141c26;
-  background: #e7eaf0;
+  color: var(--ams-text);
+  background: var(--ams-bg);
+  color-scheme: dark;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -20,6 +89,7 @@ body,
 
 body {
   min-height: 100vh;
+  background: var(--ams-bg);
 }
 
 button,
@@ -27,4 +97,17 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+/* native controls follow the machine body rather than the OS default */
+input,
+select,
+textarea {
+  background: var(--ams-well);
+  color: var(--ams-text);
+  border-color: var(--ams-line);
+}
+
+::placeholder {
+  color: var(--ams-dim);
 }

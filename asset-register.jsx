@@ -5,8 +5,8 @@ import * as XLSX from "xlsx";
 import {
   Plus, Search, ArrowLeftRight, Wrench, Archive, Pencil, Trash2, ChevronLeft,
   Download, Upload, X, RotateCcw, CircleDot, AlertCircle, AlertTriangle,
-  ChevronRight, Package, ClipboardList, CalendarClock, CalendarCheck, BarChart3, Repeat, Coins, QrCode, ShoppingCart, Receipt, Paperclip, Settings, Building2, Tag, MapPin, Map, Layers
-  , Users, LogOut, ShieldCheck
+  ChevronRight, ChevronDown, Package, ClipboardList, CalendarClock, CalendarCheck, BarChart3, Repeat, Coins, QrCode, ShoppingCart, Receipt, Paperclip, Settings, Building2, Tag, MapPin, Map, Layers,
+  Users, LogOut, Database, Menu, CheckCircle2,
 } from "lucide-react";
 import UserManagement from "./src/UserManagement.jsx";
 import {
@@ -20,22 +20,38 @@ import {
 import { discoverLegacyBrowserData, importLegacySnapshot, parseLegacyBackup } from "./src/data/legacyBrowserImport.js";
 
 /* --------------------------------------------------------------------
-   Palette. Repair stages run red → gold → amber → teal → blue, so an
-   asset visibly warms back toward "in service" as work advances.
+   Heavy-equipment scheme. The machine body is black; equipment yellow is
+   the marking colour - it carries text, edges, the active rail and the
+   primary action, never a large surface. Every value comes from the token
+   block in src/index.css, so this file states roles rather than colours
+   and a re-skin never has to touch a component again.
 --------------------------------------------------------------------- */
 const C = {
-  paper: "#E7EAF0", surface: "#FFFFFF", ink: "#141C26", mute: "#69747F",
-  rule: "#CCD4DE", ruleSoft: "#E2E7EE", soft: "#FAFBFC",
-  active: "#1F5E8C", retired: "#7A8695", due: "#96690F", overdue: "#A6392B", ok: "#2E7D6B",
+  paper: "var(--ams-bg)", surface: "var(--ams-surface)", ink: "var(--ams-text)", mute: "var(--ams-mute)",
+  rule: "var(--ams-line)", ruleSoft: "var(--ams-line-soft)", soft: "var(--ams-surface-2)",
+  brand: "var(--ams-yellow)", brandInk: "var(--ams-on-yellow)", brandEdge: "var(--ams-yellow-deep)",
+  brandDeep: "var(--ams-gold-ink)", head: "var(--ams-head)", dim: "var(--ams-dim)",
+  active: "var(--ams-ok)", retired: "var(--ams-idle)", due: "var(--ams-warn)",
+  overdue: "var(--ams-alarm)", ok: "var(--ams-ok)",
 };
+const TINT = {
+  brand: "var(--ams-yellow-tint)", ok: "var(--ams-ok-tint)", warn: "var(--ams-warn-tint)",
+  alarm: "var(--ams-alarm-tint)", info: "var(--ams-info-tint)", idle: "var(--ams-idle-tint)",
+};
+/* Stamped-plate face for the primary action: bright top edge, body colour,
+   then a darker rolled bottom edge. */
+const PLATE = "linear-gradient(180deg,var(--ams-yellow-hi) 0%,var(--ams-yellow) 44%,var(--ams-yellow-deep) 100%)";
+const PLATE_HOVER = "linear-gradient(180deg,var(--ams-yellow-lift) 0%,var(--ams-yellow-hi) 44%,var(--ams-yellow) 100%)";
+const HAZARD = "var(--ams-hazard)";
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, "Roboto Mono", monospace';
-const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+const SANS = '"Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const DISPLAY = '"Space Grotesk", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 
 const STAGES = {
-  broken: { label: "For repair", avail: "For repair", color: "#A6392B", tint: "#FAEEEC" },
-  parts: { label: "Parts purchase", avail: "Awaiting parts", color: "#96690F", tint: "#FBF4E4" },
-  ongoing: { label: "Ongoing repair", avail: "Ongoing repair", color: "#AF6318", tint: "#FBF3E9" },
-  testing: { label: "Done — for testing", avail: "Under testing", color: "#2E7D6B", tint: "#E9F4F1" },
+  broken: { label: "For repair", avail: "For repair", color: C.overdue, tint: TINT.alarm },
+  parts: { label: "Parts purchase", avail: "Awaiting parts", color: C.due, tint: TINT.warn },
+  ongoing: { label: "Ongoing repair", avail: "Ongoing repair", color: "var(--ams-info)", tint: TINT.info },
+  testing: { label: "Done — for testing", avail: "Under testing", color: C.brandDeep, tint: TINT.brand },
 };
 const STAGE_ORDER = ["broken", "parts", "ongoing", "testing"];
 
@@ -43,6 +59,9 @@ const today = () => new Date().toISOString().slice(0, 10);
 const num = (v) => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
 const money = (v) => num(v) ? num(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
 const money0 = (v) => num(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
+const count = (v) => num(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
+const metric = (v) => typeof v === "number" ? count(v) : v;
+const cap = (t) => t ? t[0].toUpperCase() + t.slice(1) : t;
 const fmt = (d) => {
   if (!d) return "—";
   const dt = new Date(d.length === 10 ? d + "T00:00:00" : d);
@@ -357,17 +376,17 @@ const planSpend = (p) => (p?.done || []).reduce((s, d) => s + num(d.cost), 0);
 /* due status for a schedule */
 const dueOf = (p) => {
   const d = daysUntil(p.nextDue);
-  if (d < 0) return { key: "overdue", label: `${Math.abs(d)}d overdue`, color: C.overdue, tint: "#FAEEEC", rank: 0 };
-  if (d === 0) return { key: "today", label: "Due today", color: C.overdue, tint: "#FAEEEC", rank: 1 };
-  if (d <= 7) return { key: "week", label: `In ${d}d`, color: "#AF6318", tint: "#FBF3E9", rank: 2 };
-  if (d <= 30) return { key: "month", label: `In ${d}d`, color: C.active, tint: "#EAF1F6", rank: 3 };
+  if (d < 0) return { key: "overdue", label: `${Math.abs(d)}d overdue`, color: C.overdue, tint: TINT.alarm, rank: 0 };
+  if (d === 0) return { key: "today", label: "Due today", color: C.overdue, tint: TINT.alarm, rank: 1 };
+  if (d <= 7) return { key: "week", label: `In ${d}d`, color: C.due, tint: TINT.warn, rank: 2 };
+  if (d <= 30) return { key: "month", label: `In ${d}d`, color: C.active, tint: TINT.ok, rank: 3 };
   return { key: "later", label: fmt(p.nextDue), color: C.mute, tint: C.soft, rank: 4 };
 };
 
 const availOf = (a, job) => {
-  if (a.status === "retired") return { key: "retired", label: "Retired", color: C.retired, tint: "#F1F3F6" };
+  if (a.status === "retired") return { key: "retired", label: "Retired", color: C.retired, tint: TINT.idle };
   if (job) return { key: job.stage, label: STAGES[job.stage].avail, color: STAGES[job.stage].color, tint: STAGES[job.stage].tint };
-  return { key: "active", label: "Active", color: C.active, tint: "#EAF1F6" };
+  return { key: "active", label: "Active", color: C.active, tint: TINT.ok };
 };
 
 /* ------------------------------ actions ------------------------------ */
@@ -582,39 +601,47 @@ const PLAN_ACTIONS = {
 };
 
 const TRAIL = { register: C.ink, transfer: C.active, fault: STAGES.broken.color, parts: STAGES.parts.color, repair: STAGES.ongoing.color, testing: STAGES.testing.color, restore: C.active, retire: C.retired, edit: C.mute, maintenance: C.ok };
-const PART_COLOR = { Needed: "#A6392B", Ordered: "#96690F", Purchased: "#2E7D6B" };
+const PART_COLOR = { Needed: C.overdue, Ordered: C.due, Purchased: C.ok };
 
 /* ------------------------------ atoms ------------------------------ */
 
 const Label = ({ children }) => (
-  <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.14em", color: C.mute }} className="uppercase mb-1">{children}</div>
+  <div className="ams-label">{children}</div>
 );
 const Dot = ({ color, size = 7 }) => (
   <span style={{ width: size, height: size, background: color, borderRadius: 999 }} className="inline-block shrink-0" />
 );
 const Chip = ({ color, tint, children, big }) => (
   <span className="inline-flex items-center gap-2" style={{
-    background: tint, color, border: `1px solid ${color}33`, borderRadius: 2,
-    padding: big ? "5px 10px" : "3px 8px", fontFamily: MONO, fontSize: big ? 11 : 10,
-    letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600, whiteSpace: "nowrap",
+    background: tint, color, border: `1px solid ${color}22`, borderRadius: 20,
+    padding: big ? "6px 11px" : "4px 9px", fontFamily: SANS, fontSize: big ? 11.5 : 11,
+    letterSpacing: "0.045em", textTransform: "uppercase", fontWeight: 750, whiteSpace: "nowrap",
   }}><Dot color={color} size={big ? 7 : 6} />{children}</span>
+);
+
+const MetricTile = ({ label, value, tone = C.ink, hint }) => (
+  <div className="ams-metric" style={{ "--tone": tone }}>
+    <Label>{label}</Label>
+    <div className="ams-metric-v">{metric(value)}</div>
+    {hint && <div className="ams-metric-hint">{hint}</div>}
+  </div>
 );
 
 function Btn({ children, onClick, icon: Icon, kind = "ghost", small, disabled }) {
   const s = {
-    solid: { background: C.ink, color: "#fff", border: `1px solid ${C.ink}` },
+    solid: { background: PLATE, color: C.brandInk, border: `1px solid ${C.brandEdge}`, fontWeight: 800, boxShadow: "0 3px 0 var(--ams-yellow-dim)" },
     ghost: { background: C.surface, color: C.ink, border: `1px solid ${C.rule}` },
-    danger: { background: C.surface, color: "#A03024", border: `1px solid ${C.rule}` },
+    danger: { background: C.surface, color: C.overdue, border: `1px solid ${C.rule}` },
   }[kind];
   return (
     <button onClick={disabled ? undefined : onClick} disabled={disabled} className="inline-flex items-center gap-2 transition-opacity hover:opacity-75 disabled:opacity-40 disabled:hover:opacity-40"
-      style={{ ...s, borderRadius: 2, fontFamily: SANS, fontSize: small ? 12.5 : 14, padding: small ? "5px 9px" : "8px 12px", cursor: disabled ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
+      style={{ ...s, minHeight: small ? 34 : 40, borderRadius: 10, fontFamily: SANS, fontSize: small ? 12.5 : 13, fontWeight: 700, padding: small ? "0 10px" : "0 13px", cursor: disabled ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
       {Icon && <Icon size={small ? 13 : 14} strokeWidth={2} />}{children}
     </button>
   );
 }
 
-const inputStyle = { width: "100%", padding: "8px 10px", border: `1px solid ${C.rule}`, borderRadius: 2, background: C.surface, color: C.ink, fontSize: 14, fontFamily: SANS, outline: "none" };
+const inputStyle = { width: "100%", minHeight: 42, padding: "9px 11px", border: `1px solid ${C.rule}`, borderRadius: 10, background: C.surface, color: C.ink, fontSize: 14, fontFamily: SANS, outline: "none" };
 
 function Field({ f, value, onChange, bad }) {
   const base = { ...inputStyle, fontFamily: f.mono ? MONO : SANS, border: `1px solid ${bad ? STAGES.broken.color : C.rule}`, background: bad ? STAGES.broken.tint : C.surface };
@@ -685,7 +712,7 @@ function Dialog({ def, subject, header, ctx, onCancel, onSubmit, busy = false })
     onSubmit(Object.fromEntries(fields.map((f) => [f.key, vals[f.key] ?? ""])));
   };
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6" style={{ background: "rgba(20,28,38,0.45)" }} onClick={busy ? undefined : onCancel}>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6" style={{ background: "rgba(25,28,39,0.45)" }} onClick={busy ? undefined : onCancel}>
       <div onClick={(e) => e.stopPropagation()} className="w-full overflow-y-auto"
         style={{ maxWidth: 620, maxHeight: "92vh", background: C.surface, borderRadius: 2, border: `1px solid ${C.rule}` }}>
         <div className="flex items-start justify-between px-5 py-4" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
@@ -731,6 +758,383 @@ const Trail = ({ entries }) => (
   </div>
 );
 
+/* -------------------------- application chrome ---------------------- */
+/* FleetDesk is used only as a layout reference here — its green identity is
+   deliberately not carried over. The product keeps its own gold-and-denim
+   Asset Management identity while adopting the fixed operational rail,
+   quiet workspace, active indicator, and mobile drawer pattern. */
+
+const CHROME_CSS = `
+.ams-shell{min-height:100vh;background:var(--ams-bg);color:${C.ink};font-family:${SANS};font-variant-numeric:tabular-nums}
+.ams-main{min-width:0;min-height:100vh;margin-left:246px;background:var(--ams-bg)}
+
+/* ------------------------------------------------------------------------
+   A white page in a black frame.
+
+   The rail and the top bar keep the machine scheme; everything they wrap is
+   a light surface, so the register reads off white while the chrome stays
+   black with its gold markings. It is done by redefining the same role
+   tokens further down the tree rather than by adding light variants of every
+   class: components ask for --ams-surface, and where they sit decides what
+   that means. Not one component knows this scope exists.
+
+   The state colours are re-derived rather than reused — the dark set was
+   tuned for a black ground and measures under 2.5:1 on white.
+   ------------------------------------------------------------------------ */
+.ams-main,.ams-overlay{
+  --ams-bg:#f2f4f7;
+  --ams-surface:#ffffff;
+  --ams-surface-2:#f4f6f9;
+  --ams-well:#f7f9fb;
+  --ams-line:#dde2e9;
+  --ams-line-soft:#e9edf2;
+  --ams-text:#131820;
+  --ams-head:#0b0d0f;
+  --ams-mute:#59616d;
+  --ams-dim:#626b79;
+  --ams-gold-ink:#8a6a00;
+  --ams-ok:#2e7d32;
+  --ams-warn:#b45309;
+  --ams-alarm:#c62828;
+  --ams-info:#1565c0;
+  --ams-idle:#6b7280;
+  --ams-yellow-tint:rgba(255,205,17,.22);
+  --ams-ok-tint:rgba(46,125,50,.12);
+  --ams-warn-tint:rgba(180,83,9,.12);
+  --ams-alarm-tint:rgba(198,40,40,.12);
+  --ams-info-tint:rgba(21,101,192,.12);
+  --ams-idle-tint:rgba(107,114,128,.12);
+  color:var(--ams-text);
+}
+
+/* The top bar sits inside the light scope but belongs to the frame, so it
+   takes back the handful of roles it actually paints with. */
+.ams-topbar{
+  --ams-surface:#14171b;
+  --ams-surface-2:#1b1f24;
+  --ams-line:#2c323a;
+  --ams-text:#e9edf2;
+  --ams-head:#ffffff;
+  --ams-mute:#a8b2bf;
+  --ams-dim:#8c97a5;
+  color:var(--ams-text);
+}
+.ams-sidebar{position:fixed;inset:0 auto 0 0;z-index:50;display:flex;width:246px;flex-direction:column;overflow-y:auto;background:var(--ams-rail);border-right:1px solid var(--ams-line);color:${C.ink};box-shadow:14px 0 40px rgba(0,0,0,.5);transition:transform 220ms ease}
+.ams-sidebar:before{position:sticky;top:0;flex:0 0 auto;height:4px;background:${HAZARD};content:""}
+.ams-side-head{display:flex;align-items:center;gap:11px;min-height:76px;padding:17px 18px;border-bottom:1px solid var(--ams-line)}
+.ams-brand-mark{display:grid;width:38px;height:38px;flex-shrink:0;place-items:center;border-radius:9px;background:${PLATE};color:var(--ams-on-yellow);box-shadow:0 3px 0 var(--ams-yellow-dim)}
+.ams-brand-name{font-family:${DISPLAY};font-size:14px;font-weight:700;line-height:1.2;letter-spacing:-.01em;color:var(--ams-yellow)}
+.ams-brand-sub{margin-top:3px;color:${C.dim};font-size:11px;line-height:1.2;letter-spacing:.06em;text-transform:uppercase}
+.ams-side-close{display:none;margin-left:auto;padding:8px;border:0;border-radius:8px;background:var(--ams-surface-2);color:${C.mute};cursor:pointer}
+.ams-side-status{display:flex;align-items:center;gap:8px;margin:17px 18px 6px;padding:10px 11px;border:1px solid var(--ams-line);border-radius:8px;background:var(--ams-surface);color:${C.mute};font-size:11.5px}
+.ams-side-label{display:flex;align-items:center;gap:9px;padding:19px 22px 8px;color:${C.dim};font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase}
+.ams-side-label:after{height:1px;flex:1;background:var(--ams-line);content:""}
+.ams-nav{display:flex;flex-direction:column;gap:3px;padding:0 12px}
+.ams-nav-item{position:relative;display:flex;width:100%;min-height:44px;align-items:center;gap:11px;padding:0 11px;border:0;border-left:3px solid transparent;border-radius:0 8px 8px 0;background:transparent;color:${C.mute};font-family:${SANS};font-size:13.5px;font-weight:600;text-align:left;cursor:pointer;transition:background 170ms ease,color 170ms ease,border-color 170ms ease}
+.ams-nav-item:hover{background:var(--ams-surface-2);color:var(--ams-text)}
+.ams-nav-item[aria-current="page"]{border-left-color:var(--ams-yellow);background:var(--ams-surface-2);color:var(--ams-yellow);font-weight:700}
+.ams-nav-item svg{flex-shrink:0;opacity:.7}
+.ams-nav-item:hover svg,.ams-nav-item[aria-current="page"] svg{opacity:1}
+.ams-nav-count{display:inline-flex;min-width:25px;height:21px;margin-left:auto;align-items:center;justify-content:center;padding:0 7px;border:1px solid var(--ams-line);border-radius:4px;background:var(--ams-surface);color:${C.mute};font-family:${DISPLAY};font-size:10.5px;font-weight:700;font-variant-numeric:tabular-nums}
+.ams-nav-count[data-active="1"]{border-color:var(--ams-yellow);background:var(--ams-yellow);color:var(--ams-on-yellow)}
+.ams-nav-count[data-quiet="1"]{color:${C.dim}}
+.ams-side-spacer{min-height:22px;flex:1}
+.ams-profile{margin:16px 12px 14px;padding:12px;border:1px solid var(--ams-line);border-radius:10px;background:var(--ams-surface)}
+.ams-profile-row{display:flex;align-items:center;gap:10px;min-width:0}
+.ams-avatar{display:grid;width:34px;height:34px;flex-shrink:0;place-items:center;border-radius:8px;background:var(--ams-yellow);color:var(--ams-on-yellow);font-family:${MONO};font-size:11px;font-weight:700}
+.ams-profile-name{overflow:hidden;color:var(--ams-head);font-size:12.5px;font-weight:700;text-overflow:ellipsis;white-space:nowrap}
+.ams-profile-role{overflow:hidden;margin-top:2px;color:${C.dim};font-size:10.5px;text-overflow:ellipsis;white-space:nowrap}
+.ams-signout{display:grid;width:34px;height:34px;flex-shrink:0;place-items:center;border:0;border-radius:8px;background:transparent;color:${C.mute};cursor:pointer}
+.ams-signout:hover{background:var(--ams-surface-2);color:var(--ams-alarm)}
+.ams-topbar{position:sticky;top:0;z-index:30;display:flex;min-height:76px;align-items:center;justify-content:space-between;gap:18px;padding:12px 34px;border-bottom:1px solid var(--ams-line);background:rgba(11,13,15,.9);backdrop-filter:blur(14px)}
+.ams-top-start{display:flex;min-width:0;align-items:center;gap:12px}
+.ams-menu{display:none;width:40px;height:40px;flex-shrink:0;place-items:center;border:1px solid var(--ams-line);border-radius:8px;background:var(--ams-surface);color:var(--ams-head);cursor:pointer}
+.ams-breadcrumb{color:${C.dim};font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+.ams-page-title{overflow:hidden;margin:2px 0 0;color:var(--ams-head);font-family:${DISPLAY};font-size:23px;font-weight:700;line-height:1.15;letter-spacing:-.025em;text-overflow:ellipsis;white-space:nowrap}
+.ams-top-actions{display:flex;align-items:center;justify-content:flex-end;gap:9px}
+.ams-ctl{display:inline-flex;min-height:40px;align-items:center;gap:8px;padding:0 13px;border:1px solid var(--ams-line);border-radius:8px;background:var(--ams-surface);color:${C.ink};font-family:${SANS};font-size:13px;font-weight:600;line-height:1;white-space:nowrap;cursor:pointer;transition:background 180ms ease,border-color 180ms ease,color 180ms ease}
+.ams-ctl:hover:not(:disabled){border-color:var(--ams-yellow-dim);background:var(--ams-surface-2);color:var(--ams-head)}
+.ams-ctl:disabled{opacity:.4;cursor:not-allowed}
+.ams-ctl[data-open="1"]{border-color:var(--ams-yellow);color:var(--ams-head)}
+.ams-ctl[data-icon="1"]{padding:0 11px}
+.ams-ctl[data-primary="1"]{border-color:var(--ams-yellow-deep);background:${PLATE};color:var(--ams-on-yellow);font-weight:800;box-shadow:0 3px 0 var(--ams-yellow-dim)}
+.ams-ctl[data-primary="1"]:hover:not(:disabled){border-color:var(--ams-yellow);background:${PLATE_HOVER};color:var(--ams-on-yellow)}
+.ams-ctl[data-primary="1"]:active:not(:disabled){transform:translateY(2px);box-shadow:0 1px 0 var(--ams-yellow-dim)}
+.ams-content{width:min(100%,1500px);margin:0 auto;padding:30px 34px 52px;font-family:${SANS};font-size:14px;line-height:1.45}
+.ams-label{margin:0 0 6px;color:${C.dim};font-family:${SANS};font-size:11px;font-weight:800;letter-spacing:.09em;line-height:1.2;text-transform:uppercase}
+.ams-section-title{color:var(--ams-head);font-family:${DISPLAY};font-size:16px;font-weight:700;letter-spacing:-.015em;line-height:1.25}
+.ams-shell input,.ams-shell select,.ams-shell textarea{background:var(--ams-well);color:${C.ink};transition:border-color 180ms ease,box-shadow 180ms ease}
+.ams-shell input:focus,.ams-shell select:focus,.ams-shell textarea:focus{border-color:var(--ams-yellow)!important;box-shadow:0 0 0 3px rgba(255,205,17,.25)}
+.ams-pop{position:absolute;top:calc(100% + 7px);z-index:60;padding:5px 0;border:1px solid var(--ams-line);border-radius:9px;background:var(--ams-surface-2);box-shadow:0 18px 55px rgba(0,0,0,.65);animation:ams-pop 140ms ease-out}
+@keyframes ams-pop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.ams-item{display:flex;width:100%;align-items:flex-start;gap:10px;padding:9px 12px;border:0;background:transparent;color:${C.ink};font-family:${SANS};font-size:13.5px;text-align:left;cursor:pointer}
+.ams-item:hover:not(:disabled){background:var(--ams-surface);color:var(--ams-head)}
+.ams-item:disabled{opacity:.4;cursor:not-allowed}
+.ams-backdrop{display:none}
+.ams-shell button:focus-visible{outline:2px solid var(--ams-yellow);outline-offset:2px}
+.ams-spin{animation:ams-rot .9s linear infinite}
+@keyframes ams-rot{to{transform:rotate(360deg)}}
+.ams-stat{position:relative;display:flex;min-height:238px;flex-direction:column;width:100%;overflow:hidden;padding:18px 20px 17px;text-align:left;background:var(--ams-surface);border:1px solid var(--ams-line);border-radius:12px;cursor:pointer;isolation:isolate;transition:border-color 180ms ease,transform 180ms ease}
+.ams-stat:before{position:absolute;inset:0 auto 0 0;width:3px;background:var(--c);content:""}
+.ams-stat:after{position:absolute;top:-54px;right:-54px;width:148px;height:148px;border-radius:50%;background:var(--tint);opacity:.6;content:"";z-index:-1;transition:transform 260ms ease,opacity 260ms ease}
+.ams-stat:hover{border-color:var(--ams-yellow-dim);transform:translateY(-2px)}
+.ams-stat:hover:after{transform:scale(1.14);opacity:.85}
+.ams-stat[aria-pressed="true"]{border-color:var(--c)}
+.ams-stat[aria-pressed="true"]:after{opacity:1}
+.ams-stat-head{display:flex;flex:0 0 auto;align-items:center;gap:11px}
+.ams-stat-icon{display:grid;width:38px;height:38px;flex:0 0 auto;place-items:center;border-radius:9px;background:var(--tint);color:var(--c);transition:transform 180ms ease}
+.ams-stat:hover .ams-stat-icon{transform:scale(1.05)}
+.ams-stat-label{min-width:0;overflow:hidden;color:${C.dim};font-size:11.5px;font-weight:700;letter-spacing:.08em;line-height:1.2;text-overflow:ellipsis;text-transform:uppercase;white-space:nowrap}
+.ams-stat-tag{display:inline-flex;flex:0 0 auto;align-items:center;gap:5px;min-height:24px;margin-left:auto;padding:0 9px;border-radius:4px;background:var(--tint);color:var(--c);font-family:${DISPLAY};font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ams-stat-tag[data-state="1"]{font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+.ams-stat-v{flex:0 0 auto;margin:16px 0 0;color:var(--ams-head);font-family:${DISPLAY};font-size:40px;font-weight:700;letter-spacing:-.05em;line-height:1;font-variant-numeric:tabular-nums}
+.ams-stat-c{flex:0 0 auto;min-height:32px;margin-top:7px;color:${C.mute};font-size:11.5px;line-height:1.4}
+.ams-bar{display:flex;flex:0 0 auto;height:6px;gap:2px;margin-top:auto;overflow:hidden;border-radius:2px;background:var(--ams-line-soft)}
+.ams-stat-progress{height:100%;border-radius:inherit;background:var(--c);transition:width 280ms ease}
+.ams-legend{display:flex;flex:0 0 auto;flex-wrap:wrap;align-content:flex-end;gap:5px 13px;min-height:36px;margin-top:11px}
+.ams-legend-item{display:inline-flex;align-items:center;gap:6px;color:${C.mute};font-size:10.5px;font-weight:600;line-height:1.35}
+.ams-legend-dot{width:7px;height:7px;flex:0 0 auto;border-radius:2px;background:var(--d)}
+.ams-legend-n{color:var(--ams-head);font-family:${DISPLAY};font-size:11px;font-weight:700;font-variant-numeric:tabular-nums}
+.ams-metric{position:relative;min-height:116px;padding:16px 17px;border:1px solid var(--ams-line);border-radius:10px;background:var(--ams-surface);overflow:hidden}
+.ams-metric:before{position:absolute;inset:0 auto 0 0;width:3px;background:var(--tone);content:""}
+.ams-metric-v{margin-top:7px;color:var(--ams-head);font-family:${DISPLAY};font-size:26px;font-weight:700;letter-spacing:-.04em;line-height:1.08;font-variant-numeric:tabular-nums}
+.ams-metric-hint{margin-top:7px;color:${C.mute};font-size:11.5px;line-height:1.35}
+.ams-table-frame{overflow:hidden;border:1px solid var(--ams-line)!important;border-radius:10px;background:var(--ams-surface)}
+.ams-table-frame.overflow-x-auto{overflow-x:auto}
+.ams-table{width:100%;border-collapse:collapse;font-family:${SANS};font-size:13px;font-variant-numeric:tabular-nums}
+.ams-table thead tr{background:var(--ams-surface-2)!important}
+.ams-table th{padding:11px 12px!important;border-bottom:1px solid var(--ams-line)!important;color:${C.dim}!important;font-family:${SANS}!important;font-size:11px!important;font-weight:800!important;letter-spacing:.075em!important;line-height:1.25;text-transform:uppercase}
+.ams-table td{padding:11px 12px!important;border-bottom:1px solid var(--ams-line-soft);line-height:1.4}
+.ams-table tbody tr{transition:background 160ms ease}
+.ams-table tbody tr:hover{background:var(--ams-surface-2)!important}
+.ams-table tbody tr:last-child td{border-bottom:0}
+.ams-data-head{padding:11px 13px!important;border-bottom:1px solid var(--ams-line)!important;background:var(--ams-surface-2)!important}
+.ams-data-head>div{color:${C.dim}!important;font-family:${SANS}!important;font-size:11px!important;font-weight:800;letter-spacing:.075em!important}
+.ams-list-row{transition:background 160ms ease,border-color 160ms ease}
+.ams-list-row:hover{background:var(--ams-surface-2)!important}
+@media (max-width:830px){
+  .ams-main{margin-left:0}
+  .ams-sidebar{width:min(286px,86vw);transform:translateX(-102%);box-shadow:18px 0 55px rgba(0,0,0,.7)}
+  .ams-sidebar[data-open="1"]{transform:translateX(0)}
+  .ams-side-close{display:grid;place-items:center}
+  .ams-backdrop{position:fixed;inset:0;z-index:45;display:block;border:0;background:rgba(0,0,0,.66);backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:opacity 220ms ease}
+  .ams-backdrop[data-open="1"]{opacity:1;pointer-events:auto}
+  .ams-menu{display:grid}
+  .ams-topbar{min-height:68px;padding:10px 18px}
+  .ams-content{padding:24px 18px 40px}
+}
+@media (max-width:580px){
+  .ams-page-title{font-size:18px}
+  .ams-breadcrumb{display:none}
+  .ams-top-actions{gap:7px}
+  .ams-ctl{padding-inline:11px}
+  .ams-stat{min-height:216px;padding:16px}
+  .ams-metric{min-height:108px;padding:14px}
+  .ams-stat-v{margin-top:13px;font-size:30px}
+  .ams-metric-v{font-size:24px}
+}
+@media (prefers-reduced-motion:reduce){.ams-sidebar,.ams-backdrop,.ams-pop,.ams-spin,.ams-ctl,.ams-nav-item,.ams-stat,.ams-stat:after,.ams-stat-icon,.ams-stat-progress{animation:none;transition:none}}
+`;
+
+
+/* A menu anchored under its own trigger. Closes on outside click and on
+   Escape, and on any click inside, so every item is a one-shot action. */
+function Popover({ trigger, children, width = 250, align = "right" }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const away = (e) => { if (!box.current?.contains(e.target)) setOpen(false); };
+    const key = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", key); };
+  }, [open]);
+  return (
+    <div ref={box} style={{ position: "relative" }}>
+      {trigger(open, () => setOpen((v) => !v))}
+      {open && (
+        <div className="ams-pop" role="menu" onClick={() => setOpen(false)} style={{ width, [align]: 0 }}>{children}</div>
+      )}
+    </div>
+  );
+}
+
+const MenuItem = ({ icon: Icon, hint, tone, children, onClick, disabled }) => (
+  <button type="button" role="menuitem" className="ams-item" onClick={onClick} disabled={disabled}
+    style={tone ? { color: tone } : undefined}>
+    {Icon && <Icon size={15} strokeWidth={2} style={{ color: tone || C.mute, flexShrink: 0, marginTop: 1 }} />}
+    <span className="min-w-0">
+      <span className="block truncate">{children}</span>
+      {hint && <span className="block truncate" style={{ fontSize: 11.5, color: C.mute, marginTop: 1 }}>{hint}</span>}
+    </span>
+  </button>
+);
+
+const OPERATIONAL_TABS = new Set(["assets", "repairs", "parts", "maintenance", "map", "reports"]);
+
+const userInitials = (identity) => {
+  const head = String(identity.name || identity.email || "").split("@")[0];
+  const parts = head.split(/[^A-Za-z0-9]+/).filter(Boolean);
+  return ((parts.length > 1 ? parts[0][0] + parts[1][0] : head.slice(0, 2)) || "?").toUpperCase();
+};
+
+function RegisterSidebar({ tabs, tab, onTab, identity, onSignOut, open, onClose, status }) {
+  const nav = useRef(null);
+  const operational = tabs.filter(([key]) => OPERATIONAL_TABS.has(key));
+  const administration = tabs.filter(([key]) => !OPERATIONAL_TABS.has(key));
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const previouslyFocused = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const frame = requestAnimationFrame(() => nav.current?.querySelector('[aria-current="page"]')?.focus());
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = [...(nav.current?.querySelectorAll("button:not(:disabled)") || [])];
+      if (!focusable.length) return;
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      previouslyFocused?.focus?.();
+    };
+  }, [open, onClose]);
+
+  const onNavKey = (event) => {
+    const step = { ArrowDown: 1, ArrowUp: -1 }[event.key];
+    const at = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
+    if (step === undefined && at === null) return;
+    event.preventDefault();
+    const here = tabs.findIndex(([key]) => key === tab);
+    const next = at !== null ? at : (here + step + tabs.length) % tabs.length;
+    onTab(tabs[next][0]);
+    nav.current?.querySelectorAll(".ams-nav-item")[next]?.focus();
+  };
+
+  const renderItem = ([key, label, Icon, count]) => {
+    const selected = tab === key;
+    return (
+      <button key={key} type="button" id={`ams-nav-${key}`} className="ams-nav-item"
+        aria-current={selected ? "page" : undefined} aria-controls="ams-panel"
+        onClick={() => { onTab(key); onClose(); }}>
+        <Icon size={18} strokeWidth={selected ? 2.2 : 1.9} />
+        <span>{label}</span>
+        {count !== null && (
+          <span className="ams-nav-count" data-active={selected ? "1" : undefined} data-quiet={count === 0 ? "1" : undefined}>
+            {metric(count)}
+          </span>
+        )}
+      </button>
+    );
+  };
+
+  return (
+    <>
+      <button type="button" className="ams-backdrop" data-open={open ? "1" : "0"}
+        tabIndex={open ? 0 : -1} aria-label="Close navigation" onClick={onClose} />
+      <aside id="ams-sidebar" ref={nav} className="ams-sidebar" data-open={open ? "1" : "0"} aria-label="Asset Management System navigation">
+        <div className="ams-side-head">
+          <div className="ams-brand-mark" aria-hidden="true"><Package size={20} strokeWidth={2.2} /></div>
+          <div className="min-w-0">
+            <div className="ams-brand-name">Asset Management System</div>
+            <div className="ams-brand-sub">Operations workspace</div>
+          </div>
+          <button type="button" className="ams-side-close" aria-label="Close navigation" onClick={onClose}><X size={18} /></button>
+        </div>
+
+        <div className="ams-side-status"><Dot color={status.color} size={7} />{status.text}</div>
+        <div className="ams-side-label">Workspace</div>
+        <nav className="ams-nav" aria-label="Operational sections" onKeyDown={onNavKey}>
+          {operational.map(renderItem)}
+        </nav>
+
+        {administration.length > 0 && (
+          <>
+            <div className="ams-side-label">Administration</div>
+            <nav className="ams-nav" aria-label="Administration sections" onKeyDown={onNavKey}>
+              {administration.map(renderItem)}
+            </nav>
+          </>
+        )}
+
+        <div className="ams-side-spacer" />
+        <div className="ams-profile">
+          <div className="ams-profile-row">
+            <div className="ams-avatar" aria-hidden="true">{userInitials(identity)}</div>
+            <div className="min-w-0 flex-1">
+              <div className="ams-profile-name">{identity.name}</div>
+              <div className="ams-profile-role">{identity.role}{identity.isSuperAdmin ? " · Full access" : ""}</div>
+            </div>
+            <button type="button" className="ams-signout" onClick={onSignOut} title="Sign out" aria-label="Sign out"><LogOut size={17} /></button>
+          </div>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+function RegisterTopbar({ tabs, tab, navOpen, onMenu, onRefresh, refreshing, busy, dataActions, primary }) {
+  const active = tabs.find(([key]) => key === tab);
+  const section = OPERATIONAL_TABS.has(tab) ? "Workspace" : "Administration";
+  return (
+    <header className="ams-topbar">
+      <div className="ams-top-start">
+        <button type="button" className="ams-menu" onClick={onMenu} aria-label="Open navigation"
+          aria-controls="ams-sidebar" aria-expanded={navOpen}>
+          <Menu size={19} />
+        </button>
+        <div className="min-w-0">
+          <div className="ams-breadcrumb">Asset Management System / {section}</div>
+          <h1 id="ams-page-title" className="ams-page-title">{active?.[1] || "Asset register"}</h1>
+        </div>
+      </div>
+
+      <div className="ams-top-actions">
+        <button type="button" className="ams-ctl" data-icon="1" onClick={onRefresh} disabled={refreshing || busy}
+          title="Refresh from Supabase" aria-label="Refresh from Supabase">
+          <RotateCcw size={16} strokeWidth={2} className={refreshing ? "ams-spin" : undefined} />
+        </button>
+
+        {dataActions.length > 0 && (
+          <Popover width={266} trigger={(isOpen, toggle) => (
+            <button type="button" className="ams-ctl" data-open={isOpen ? "1" : "0"} onClick={toggle}
+              aria-haspopup="menu" aria-expanded={isOpen} title="Export and import">
+              <Database size={16} strokeWidth={2} style={{ color: C.mute }} />
+              <span className="hidden sm:inline">Data</span>
+              <ChevronDown size={14} strokeWidth={2} style={{ color: C.mute }} />
+            </button>
+          )}>
+            <div style={{ padding: "7px 12px 3px" }}><Label>Export &amp; import</Label></div>
+            {dataActions.map((action) => (
+              <MenuItem key={action.key} icon={action.icon} hint={action.hint} onClick={action.onClick} disabled={action.disabled}>{action.label}</MenuItem>
+            ))}
+          </Popover>
+        )}
+
+        {primary && (
+          <button type="button" className="ams-ctl" data-primary="1" onClick={primary.onClick} disabled={primary.disabled}
+            title={primary.label} aria-label={primary.label}>
+            <primary.icon size={16} strokeWidth={2} /><span className="hidden sm:inline">{primary.label}</span>
+          </button>
+        )}
+      </div>
+    </header>
+  );
+}
+
+
 /* ------------------------------- app ------------------------------- */
 
 export default function AssetRegister({ currentUser, access, onSignOut }) {
@@ -746,6 +1150,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
   const [loadErr, setLoadErr] = useState("");
   const [saveErr, setSaveErr] = useState("");
   const [tab, setTab] = useState("assets");
+  const [navOpen, setNavOpen] = useState(false);
   const [sel, setSel] = useState(null);
   const [job, setJob] = useState(null);
   const [q, setQ] = useState("");
@@ -760,6 +1165,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
   const [notice, setNotice] = useState("");
   const [legacyBrowserData, setLegacyBrowserData] = useState(null);
   const fileRef = useRef(null);
+  const closeNav = useCallback(() => setNavOpen(false), []);
 
   const permissionSet = useMemo(() => new Set(access?.permissions || []), [access]);
   const can = (permission) => permissionSet.has(permission);
@@ -916,6 +1322,17 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
     allowedAssets.forEach((a) => { const j = openJob(a.id); if (j && a.status !== "retired") m[j.stage]++; });
     return m;
   }, [allowedAssets, openJob]);
+
+  const share = (n) => (totals.all ? Math.round((n / totals.all) * 100) : 0);
+  /* The three buckets are exhaustive, so they compose the whole. Zero-length
+     segments are dropped rather than drawn, or the 2px gaps would stack up as
+     a stripe where there is no data. */
+  const mix = [
+    ["active", totals.active, C.active, "Active"],
+    ["out", totals.out, STAGES.broken.color, "Broken or in repair"],
+    ["retired", totals.retired, C.retired, "Retired"],
+  ].filter(([, n]) => n > 0);
+  const openStages = STAGE_ORDER.filter((st) => stageMix[st] > 0);
 
   const counts = useMemo(() => {
     const c = { all: scoped.length, active: 0, out: 0, retired: 0 };
@@ -1110,6 +1527,8 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
     rd.readAsText(f); e.target.value = "";
   };
 
+  const pickLegacyFile = useCallback(() => fileRef.current?.click(), []);
+
   const importDiscoveredBrowserData = async () => {
     if (!legacyBrowserData?.snapshot || !isSuperAdmin) return;
     try {
@@ -1168,72 +1587,111 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
     ["users", "User Management", Users, null, C.active, can("users.manage") && isSuperAdmin],
   ].filter((entry) => entry[5]);
 
+  /* Exports and imports are occasional and mutually exclusive in intent,
+     so they belong in one menu rather than four buttons beside the one
+     action most people opened this page to take. */
+  const dataActions = [
+    ...(can("reports.export")
+      ? [{ key: "csv", icon: Download, label: "Export CSV", hint: "Assets in your current view", onClick: exportCsv }] : []),
+    ...(isSuperAdmin
+      ? [{ key: "backup", icon: Archive, label: "Download backup", hint: "Whole register as JSON", onClick: exportJson },
+        { key: "legacy", icon: Upload, label: "Import legacy file", hint: "A JSON backup from disk", onClick: pickLegacyFile, disabled: saving }] : []),
+    ...(isSuperAdmin && legacyBrowserData?.snapshot
+      ? [{ key: "found", icon: Layers, label: `Import ${legacyBrowserData.source} data`, hint: "Found on this device", onClick: importDiscoveredBrowserData, disabled: saving }] : []),
+  ];
+  const identity = {
+    name: access?.full_name || currentUser?.email || "Signed in",
+    email: currentUser?.email,
+    role: access?.role_name || "Team member",
+    isSuperAdmin,
+  };
+  const syncStatus = saving ? { color: C.due, text: "Saving to Supabase…" }
+    : refreshing ? { color: C.due, text: "Refreshing workspace…" }
+      : { color: C.ok, text: "Supabase connected · Live" };
+  const selectTab = (key) => { setTab(key); setJob(null); };
+  const primaryAction = can("asset.create")
+    ? { icon: Plus, label: "Register asset", disabled: saving, onClick: () => setDlg({ kind: "asset", name: "register" }) }
+    : null;
+
   return (
-    <div className="min-h-screen" style={{ background: C.paper, fontFamily: SANS, color: C.ink }}>
-      <div style={{ background: C.surface, borderBottom: `1px solid ${C.rule}` }}>
-        <div className="mx-auto px-5 pt-4 flex flex-wrap items-center justify-between gap-3" style={{ maxWidth: 1240 }}>
-          <h1 className="uppercase" style={{ fontFamily: MONO, fontSize: 15, letterSpacing: "0.22em", fontWeight: 700 }}>Asset register</h1>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <div className="flex items-center gap-2 mr-2" style={{ fontSize: 12.5, color: C.mute }}>
-              <ShieldCheck size={15} style={{ color: C.active }} />
-              <span>{access?.full_name || currentUser?.email} · {access?.role_name}</span>
-              <button onClick={onSignOut} title="Sign out" className="p-1 hover:opacity-60"><LogOut size={15} /></button>
-            </div>
-            <Btn icon={RotateCcw} onClick={() => reloadOperationalData().catch(() => {})} disabled={refreshing || saving}>{refreshing ? "Refreshing…" : "Refresh"}</Btn>
-            {can("reports.export") && <Btn icon={Download} onClick={exportCsv}>CSV</Btn>}
-            {isSuperAdmin && <Btn icon={Download} onClick={exportJson}>Backup</Btn>}
-            {isSuperAdmin && <Btn icon={Upload} onClick={() => fileRef.current?.click()} disabled={saving}>Import legacy file</Btn>}
-            {isSuperAdmin && legacyBrowserData?.snapshot && <Btn icon={Upload} onClick={importDiscoveredBrowserData} disabled={saving}>Import {legacyBrowserData.source} data</Btn>}
-            <input ref={fileRef} type="file" accept="application/json" className="hidden" onChange={importJson} />
-            {can("asset.create") && <Btn kind="solid" icon={Plus} onClick={() => setDlg({ kind: "asset", name: "register" })} disabled={saving}>Register asset</Btn>}
+    <div className="ams-shell" style={{ fontFamily: SANS }}>
+      <style>{CHROME_CSS}</style>
+      <RegisterSidebar
+        tabs={tabs} tab={tab} onTab={selectTab} identity={identity} onSignOut={onSignOut}
+        open={navOpen} onClose={closeNav} status={syncStatus}
+      />
+
+      <main className="ams-main">
+        <RegisterTopbar
+        tabs={tabs} tab={tab} navOpen={navOpen} onMenu={() => setNavOpen(true)}
+        onRefresh={() => reloadOperationalData().catch(() => {})}
+        refreshing={refreshing} busy={saving} dataActions={dataActions}
+        primary={primaryAction}
+        />
+        <input ref={fileRef} type="file" accept="application/json" className="hidden" onChange={importJson} />
+
+        {loadErr && <div className="px-5 py-2 text-center" style={{ background: STAGES.broken.tint, color: STAGES.broken.color, fontSize: 13 }}>{loadErr} <button className="underline ml-2" onClick={() => reloadOperationalData().catch(() => {})}>Retry</button></div>}
+        {saveErr && <div className="px-5 py-2 text-center" style={{ background: STAGES.broken.tint, color: STAGES.broken.color, fontSize: 13 }}>{saveErr}</div>}
+        {legacyBrowserData?.error && <div className="px-5 py-2 text-center" style={{ background: TINT.warn, color: C.due, fontSize: 13 }}>Legacy {legacyBrowserData.source} data was found but could not be parsed: {legacyBrowserData.error}. Nothing was deleted.</div>}
+        {notice && (
+          <div className="flex items-center justify-center gap-3 px-5 py-2" style={{ background: TINT.ok, color: C.ok, fontSize: 13 }}>
+            {notice}
+            <button onClick={() => setNotice("")} style={{ color: C.ok }} className="hover:opacity-60"><X size={14} /></button>
           </div>
-        </div>
-        <div className="mx-auto px-5 flex gap-5 mt-3 overflow-x-auto" style={{ maxWidth: 1240 }}>
-          {tabs.map(([k, label, Icon, n, col]) => (
-            <button key={k} onClick={() => { setTab(k); setJob(null); }} className="flex items-center gap-2 pb-3 shrink-0"
-              style={{ borderBottom: `2px solid ${tab === k ? C.ink : "transparent"}`, color: tab === k ? C.ink : C.mute, fontSize: 14, fontWeight: tab === k ? 600 : 400 }}>
-              <Icon size={15} />{label}
-              {n !== null && <span style={{ fontFamily: MONO, fontSize: 11, background: tab === k ? C.ink : (n > 0 && k !== "assets" ? col : C.ruleSoft), color: tab === k || (n > 0 && k !== "assets") ? "#fff" : C.mute, padding: "1px 6px", borderRadius: 2 }}>{n}</span>}
-            </button>
-          ))}
-        </div>
-      </div>
+        )}
 
-      {loadErr && <div className="px-5 py-2 text-center" style={{ background: STAGES.broken.tint, color: STAGES.broken.color, fontSize: 13 }}>{loadErr} <button className="underline ml-2" onClick={() => reloadOperationalData().catch(() => {})}>Retry</button></div>}
-      {saveErr && <div className="px-5 py-2 text-center" style={{ background: STAGES.broken.tint, color: STAGES.broken.color, fontSize: 13 }}>{saveErr}</div>}
-      {(saving || refreshing) && <div className="px-5 py-1.5 text-center" style={{ background: C.soft, color: C.mute, fontFamily: MONO, fontSize: 11, letterSpacing: "0.08em" }}>{saving ? "SAVING TO SUPABASE…" : "REFRESHING FROM SUPABASE…"}</div>}
-      {legacyBrowserData?.error && <div className="px-5 py-2 text-center" style={{ background: "#FBF4E4", color: C.due, fontSize: 13 }}>Legacy {legacyBrowserData.source} data was found but could not be parsed: {legacyBrowserData.error}. Nothing was deleted.</div>}
-      {notice && (
-        <div className="flex items-center justify-center gap-3 px-5 py-2" style={{ background: "#E9F4F1", color: C.ok, fontSize: 13 }}>
-          {notice}
-          <button onClick={() => setNotice("")} style={{ color: C.ok }} className="hover:opacity-60"><X size={14} /></button>
-        </div>
-      )}
-
-      <div className="mx-auto px-5 py-5" style={{ maxWidth: 1240 }}>
+        <div id="ams-panel" role="region" aria-labelledby={`ams-nav-${tab}`} className="ams-content">
         {tab === "assets" && (<>
-          <div className="grid grid-cols-3 gap-3 mb-4">
-            {[["Total assets", totals.all, C.ink, "all"],
-              ["Active", totals.active, C.active, "active"],
-              ["Broken", totals.out, STAGES.broken.color, "out"]].map(([l, v, col, k]) => (
-              <button key={l} onClick={() => setFilter(k)} className="text-left px-4 py-3"
-                style={{ background: C.surface, border: `1px solid ${filter === k ? col : C.rule}`, borderTop: `2px solid ${col}` }}>
-                <Label>{l}</Label>
-                <div style={{ fontFamily: MONO, fontSize: 26, fontWeight: 700, color: col, lineHeight: 1.15 }}>{v}</div>
-                {k === "out" && totals.out > 0 && (
-                  <div style={{ fontSize: 11.5, color: C.mute, lineHeight: 1.35 }}>
-                    {STAGE_ORDER.filter((st) => stageMix[st] > 0).map((st) => `${stageMix[st]} ${STAGE_SHORT[st]}`).join(" · ")}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
+            {[
+              ["all", "Total assets", totals.all, Package, C.brandDeep, TINT.brand,
+                "Every asset on the register",
+                mix.map(([mk, n, color, label]) => [mk, label, n, color])],
+              ["active", "Active", totals.active, CheckCircle2, C.ok, TINT.ok,
+                "Available for daily operations",
+                [["active", "Available", totals.active, C.ok],
+                 ["rest", "Unavailable", totals.out + totals.retired, C.retired]]],
+              ["out", "Broken", totals.out, Wrench, STAGES.broken.color, TINT.alarm,
+                openStages.length > 0 ? "Out of service and in the repair flow" : "Nothing is out of service",
+                openStages.map((st) => [st, cap(STAGE_SHORT[st]), stageMix[st], STAGES[st].color])],
+            ].map(([k, label, value, Icon, tone, tint, context, legend]) => {
+              const percentage = share(value);
+              const selected = filter === k;
+              return (
+                <button key={k} type="button" className="ams-stat" aria-pressed={selected}
+                  aria-label={`${label}: ${metric(value)}. ${context}. ${selected ? "Current filter" : "Select to filter assets"}.`}
+                  style={{ "--c": tone, "--tint": tint }} onClick={() => setFilter(k)}>
+                  <div className="ams-stat-head">
+                    <span className="ams-stat-icon" aria-hidden="true"><Icon size={19} strokeWidth={2} /></span>
+                    <span className="ams-stat-label">{label}</span>
+                    {selected
+                      ? <span className="ams-stat-tag" data-state="1"><CheckCircle2 size={12} aria-hidden="true" />Viewing</span>
+                      : k !== "all" && <span className="ams-stat-tag">{percentage}%</span>}
                   </div>
-                )}
-                {k === "all" && totals.retired > 0 && (
-                  <div style={{ fontSize: 11.5, color: C.mute }}>{totals.retired} retired</div>
-                )}
-              </button>
-            ))}
+                  <div className="ams-stat-v">{metric(value)}</div>
+                  <div className="ams-stat-c">{context}</div>
+                  <div className="ams-bar" aria-hidden="true">
+                    {k === "all" && totals.all > 0
+                      ? mix.map(([mk, n, color]) => <span key={mk} style={{ flex: n, background: color }} />)
+                      : <span className="ams-stat-progress" style={{ width: `${percentage}%` }} />}
+                  </div>
+                  {/* always rendered, empty or not, so one card without a
+                      legend cannot drop its bar out of line with the others */}
+                  <div className="ams-legend" aria-hidden="true">
+                    {legend.map(([lk, lLabel, n, color]) => (
+                      <span key={lk} className="ams-legend-item">
+                        <span className="ams-legend-dot" style={{ "--d": color }} />
+                        {lLabel}<span className="ams-legend-n">{metric(n)}</span>
+                      </span>
+                    ))}
+                  </div>
+                </button>
+              );
+            })}
           </div>
           <div className="flex flex-wrap items-center gap-2 mb-4">
             <div className="relative flex-1" style={{ minWidth: 240 }}>
-              <Search size={15} style={{ color: C.mute, position: "absolute", left: 10, top: 10 }} />
+              <Search size={15} style={{ color: C.mute, position: "absolute", left: 11, top: 13 }} />
               <input value={q} onChange={(e) => handleAssetQuery(e.target.value)} placeholder="Scan a QR code, or search tag, name, serial, body no., location, person"
                 style={{ ...inputStyle, paddingLeft: 32 }} />
             </div>
@@ -1269,7 +1727,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
 
           <div className="flex gap-5 items-start">
             <div className={`${current ? "hidden md:block" : "block"} w-full md:w-auto shrink-0`}>
-              <div className="overflow-hidden md:w-80 lg:w-96" style={{ background: C.surface, border: `1px solid ${C.rule}`, borderRadius: 2 }}>
+              <div className="ams-table-frame overflow-hidden md:w-80 lg:w-96" style={{ background: C.surface }}>
                 {shown.length === 0 ? (
                   <div className="px-5 py-12 text-center">
                     <div style={{ fontSize: 14, marginBottom: 4 }}>{allowedAssets.length === 0 ? "No assets are available in your assigned scope." : "No assets match these filters."}</div>
@@ -1279,8 +1737,8 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
                   const s = availOf(a, openJob(a.id));
                   const dueHere = plansOf(a.id).filter((p) => daysUntil(p.nextDue) <= 30).sort((x, y) => dueOf(x).rank - dueOf(y).rank)[0];
                   return (
-                    <button key={a.id} onClick={() => setSel(a.id)} className="w-full text-left px-4 py-3 flex gap-3 items-start"
-                      style={{ borderBottom: `1px solid ${C.ruleSoft}`, background: sel === a.id ? "#F1F5F9" : "transparent", borderLeft: `3px solid ${sel === a.id ? s.color : "transparent"}` }}>
+                    <button key={a.id} onClick={() => setSel(a.id)} className="ams-list-row w-full text-left px-4 py-3 flex gap-3 items-start"
+                      style={{ borderBottom: `1px solid ${C.ruleSoft}`, background: sel === a.id ? C.soft : "transparent", borderLeft: `3px solid ${sel === a.id ? s.color : "transparent"}` }}>
                       <div className="pt-1"><Dot color={s.color} /></div>
                       <div className="min-w-0 flex-1">
                         <div className="uppercase flex items-center gap-2" style={{ fontFamily: MONO, fontSize: 11, letterSpacing: "0.1em", color: s.color }}>
@@ -1302,7 +1760,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
                   Select an asset to see its availability, schedules, and custody trail.
                 </div>
               ) : (
-                <div className="overflow-hidden" style={{ background: C.surface, border: `1px solid ${C.rule}`, borderRadius: 2 }}>
+                <div className="ams-table-frame overflow-hidden" style={{ background: C.surface }}>
                   <div className="px-5 pt-5 pb-4">
                     <button onClick={() => setSel(null)} className="md:hidden flex items-center gap-1 mb-3" style={{ fontSize: 13, color: C.mute }}><ChevronLeft size={15} />All assets</button>
                     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1462,17 +1920,18 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
         {tab === "reports" && <ReportsTab assets={allowedAssets} repairs={allowedRepairs} plans={allowedPlans} ctx={ctx} csv={csv} openJob={openJob} purchasingOnly={!can("reports.view")} />}
 
         {tab === "users" && isSuperAdmin && can("users.manage") && <UserManagement />}
-      </div>
+        </div>
+      </main>
 
-      {dlg && <Dialog def={dlgDef} subject={dlgSubject} header={dlgHeader} ctx={ctx} busy={saving} onCancel={() => setDlg(null)}
-        onSubmit={(vals) => dlg.kind === "asset" ? runAsset(dlg.name, vals) : dlg.kind === "repair" ? runRepair(dlg.name, vals) : dlg.kind === "part" ? runPart(dlg.name, vals) : dlg.kind === "company" ? runCompany(dlg.name, vals) : dlg.kind === "category" ? runCategory(dlg.name, vals) : dlg.kind === "project" ? runProject(dlg.name, vals) : runPlan(dlg.name, vals)} />}
+      {dlg && <div className="ams-overlay"><Dialog def={dlgDef} subject={dlgSubject} header={dlgHeader} ctx={ctx} busy={saving} onCancel={() => setDlg(null)}
+        onSubmit={(vals) => dlg.kind === "asset" ? runAsset(dlg.name, vals) : dlg.kind === "repair" ? runRepair(dlg.name, vals) : dlg.kind === "part" ? runPart(dlg.name, vals) : dlg.kind === "company" ? runCompany(dlg.name, vals) : dlg.kind === "category" ? runCategory(dlg.name, vals) : dlg.kind === "project" ? runProject(dlg.name, vals) : runPlan(dlg.name, vals)} /></div>}
 
-      {viewer && <ReceiptViewer meta={viewer.meta || viewer} onClose={() => setViewer(null)}
+      {viewer && <div className="ams-overlay"><ReceiptViewer meta={viewer.meta || viewer} onClose={() => setViewer(null)}
         canRemove={can("purchasing.manage")}
-        onRemove={() => removeReceipt(viewer.jobId, viewer.partId, viewer.meta || viewer)} />}
+        onRemove={() => removeReceipt(viewer.jobId, viewer.partId, viewer.meta || viewer)} /></div>}
 
       {confirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(20,28,38,0.45)" }} onClick={() => setConfirm(null)}>
+        <div className="ams-overlay fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(11,13,15,0.55)" }} onClick={() => setConfirm(null)}>
           <div onClick={(e) => e.stopPropagation()} className="p-5" style={{ maxWidth: 420, background: C.surface, borderRadius: 2 }}>
             <div style={{ fontSize: 16, fontWeight: 600 }}>{confirm.title}</div>
             <div style={{ fontSize: 13.5, color: C.mute, marginTop: 6, lineHeight: 1.5 }}>{confirm.body}</div>
@@ -1532,7 +1991,7 @@ function PartRow({ part: p, job, asset, onAct, onView, onDrop, showTicket, locke
           </div>
         </div>
         <div style={{ fontFamily: MONO, fontSize: 14.5, fontWeight: 700, textAlign: "right" }}>{money(line)}</div>
-        <div><Chip color={col} tint={p.state === "Purchased" ? "#E9F4F1" : p.state === "Ordered" ? "#FBF4E4" : "#FAEEEC"}>{p.state}</Chip></div>
+        <div><Chip color={col} tint={p.state === "Purchased" ? TINT.ok : p.state === "Ordered" ? TINT.warn : TINT.alarm}>{p.state}</Chip></div>
         <div>{receiptCell}</div>
         <div>{actions}</div>
       </div>
@@ -1549,7 +2008,7 @@ function PartRow({ part: p, job, asset, onAct, onView, onDrop, showTicket, locke
         <div>{num(p.qty) || 1} × {money(p.unit)}</div>
         <div style={{ fontSize: 13.5, fontWeight: 700 }}>{money(line)}</div>
       </div>
-      <Chip color={col} tint={p.state === "Purchased" ? "#E9F4F1" : p.state === "Ordered" ? "#FBF4E4" : "#FAEEEC"}>{p.state}</Chip>
+      <Chip color={col} tint={p.state === "Purchased" ? TINT.ok : p.state === "Ordered" ? TINT.warn : TINT.alarm}>{p.state}</Chip>
       {p.receipt ? receiptCell : p.state === "Purchased" ? <span className="flex items-center gap-1.5" style={{ fontSize: 12, color: C.overdue }}><AlertCircle size={13} />No receipt</span> : null}
       {actions}
     </div>
@@ -1572,7 +2031,7 @@ function ReceiptViewer({ meta, onClose, onRemove, canRemove }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(20,28,38,0.6)" }} onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(25,28,39,0.6)" }} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className="flex flex-col" style={{ maxWidth: 720, width: "100%", maxHeight: "92vh", background: C.surface, borderRadius: 2 }}>
         <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
           <div className="min-w-0">
@@ -1585,7 +2044,7 @@ function ReceiptViewer({ meta, onClose, onRemove, canRemove }) {
           {err ? <div className="text-center py-10" style={{ fontSize: 13, color: C.overdue }}>{err}</div>
             : !src ? <div className="text-center py-10" style={{ fontFamily: MONO, fontSize: 11, letterSpacing: "0.15em", color: C.mute }}>LOADING…</div>
             : meta.type?.startsWith("image/") ? <img src={src} alt={meta.name} style={{ maxWidth: "100%", display: "block", margin: "0 auto" }} />
-            : <iframe title={meta.name} src={src} style={{ width: "100%", height: "60vh", border: "none", background: "#fff" }} />}
+            : <iframe title={meta.name} src={src} style={{ width: "100%", height: "60vh", border: "none", background: "var(--ams-surface-2)" }} />}
         </div>
         <div className="flex justify-between gap-2 px-4 py-3" style={{ borderTop: `1px solid ${C.ruleSoft}` }}>
           {canRemove ? <Btn kind="danger" icon={Trash2} onClick={onRemove}>Remove receipt</Btn> : <span />}
@@ -1714,15 +2173,13 @@ function AssetMap({ assets, projects, companies, categoryNames, openJob, onOpenA
       {[["Assets shown", rows.length, C.ink], ["Project/Locations", sites.length, C.active],
         ["On the list", rows.filter((a) => a.project && a.project !== NO_PROJECT).length, C.ok],
         ["Off the list (X)", rows.filter((a) => !a.project || a.project === NO_PROJECT).length, C.mute]].map(([l, v, col]) => (
-        <div key={l} className="px-4 py-3" style={{ background: C.surface, border: `1px solid ${C.rule}`, borderTop: `2px solid ${col}` }}>
-          <Label>{l}</Label><div style={{ fontFamily: MONO, fontSize: 22, fontWeight: 700, color: col }}>{v}</div>
-        </div>
+        <MetricTile key={l} label={l} value={v} tone={col} />
       ))}
     </div>
 
     <div className="flex flex-wrap items-center gap-2 mb-4">
       <div className="relative flex-1" style={{ minWidth: 230 }}>
-        <Search size={15} style={{ color: C.mute, position: "absolute", left: 10, top: 10 }} />
+        <Search size={15} style={{ color: C.mute, position: "absolute", left: 11, top: 13 }} />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search asset, tag, plate, project, person" style={{ ...inputStyle, paddingLeft: 32 }} />
       </div>
       <select value={comp} onChange={(e) => setComp(e.target.value)} style={{ ...selStyle, color: comp ? C.ink : C.mute }}>
@@ -1839,19 +2296,19 @@ function Registry({ icon: Icon, title, blurb, addLabel, items, countOf, metaOf, 
     <div className="mb-8">
       <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
         <div style={{ maxWidth: 560 }}>
-          <div style={{ fontSize: 15, fontWeight: 600 }}>{title}</div>
+          <div className="ams-section-title">{title}</div>
           <div style={{ fontSize: 13, color: C.mute, lineHeight: 1.5, marginTop: 2 }}>{blurb}</div>
         </div>
         <Btn kind="solid" icon={Plus} onClick={onAdd}>{addLabel}</Btn>
       </div>
 
       {unassigned > 0 && items.length > 0 && (
-        <div className="flex items-center gap-2 px-4 py-3 mb-3" style={{ background: "#FBF4E4", borderLeft: `3px solid ${C.due}`, fontSize: 13.5, color: C.due }}>
+        <div className="flex items-center gap-2 px-4 py-3 mb-3" style={{ background: TINT.warn, borderLeft: `3px solid ${C.due}`, fontSize: 13.5, color: C.due }}>
           <AlertCircle size={15} />{unassignedText(unassigned)}
         </div>
       )}
 
-      <div style={{ background: C.surface, border: `1px solid ${C.rule}` }}>
+      <div className="ams-table-frame" style={{ background: C.surface }}>
         {items.length === 0 ? (
           <div className="px-5 py-10 text-center">
             <div style={{ fontSize: 14, marginBottom: 4 }}>{empty[0]}</div>
@@ -1917,7 +2374,7 @@ function SettingsTab({ companies, categories, projects, assets, on }) {
     <div className="mb-8">
       <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
         <div style={{ maxWidth: 560 }}>
-          <div style={{ fontSize: 15, fontWeight: 600 }}>Project/Location</div>
+          <div className="ams-section-title">Project/Location</div>
           <div style={{ fontSize: 13, color: C.mute, lineHeight: 1.5, marginTop: 2 }}>
             Project ID, its address, and a geocode for the map. On transfer you pick the ID and the address is looked up; anything off this list is recorded as <strong>{NO_PROJECT}</strong> with the address typed in.
           </div>
@@ -1928,7 +2385,7 @@ function SettingsTab({ companies, categories, projects, assets, on }) {
         </div>
       </div>
 
-      <div style={{ background: C.surface, border: `1px solid ${C.rule}` }}>
+      <div className="ams-table-frame" style={{ background: C.surface }}>
         {projects.length === 0 ? (
           <div className="px-5 py-10 text-center">
             <div style={{ fontSize: 14, marginBottom: 4 }}>No project/locations set up.</div>
@@ -1983,9 +2440,7 @@ function PartsTab({ repairs, assets, onAct, onView, onDrop, onAdd, can }) {
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
       {[["To buy", count("Needed"), PART_COLOR.Needed], ["Ordered", count("Ordered"), PART_COLOR.Ordered],
         ["On order, value", money0(committed), PART_COLOR.Ordered], ["Purchased, spent", money0(spent), PART_COLOR.Purchased]].map(([l, v, col]) => (
-        <div key={l} className="px-4 py-3" style={{ background: C.surface, border: `1px solid ${C.rule}`, borderTop: `2px solid ${col}` }}>
-          <Label>{l}</Label><div style={{ fontFamily: MONO, fontSize: 22, fontWeight: 700, color: col }}>{v}</div>
-        </div>
+        <MetricTile key={l} label={l} value={v} tone={col} />
       ))}
     </div>
 
@@ -1998,7 +2453,7 @@ function PartsTab({ repairs, assets, onAct, onView, onDrop, onAdd, can }) {
 
     <div className="flex flex-wrap items-center gap-2 mb-4">
       <div className="relative flex-1" style={{ minWidth: 240 }}>
-        <Search size={15} style={{ color: C.mute, position: "absolute", left: 10, top: 10 }} />
+        <Search size={15} style={{ color: C.mute, position: "absolute", left: 11, top: 13 }} />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search part, supplier, receipt no., asset, ticket" style={{ ...inputStyle, paddingLeft: 32 }} />
       </div>
       <select value={state} onChange={(e) => setState(e.target.value)} style={{ ...inputStyle, width: "auto", minWidth: 165, color: state ? PART_COLOR[state] : C.mute, fontWeight: state ? 600 : 400 }}>
@@ -2008,7 +2463,7 @@ function PartsTab({ repairs, assets, onAct, onView, onDrop, onAdd, can }) {
       {can("parts.manage") && <Btn kind="solid" icon={Plus} onClick={onAdd}>Add part</Btn>}
     </div>
 
-    <div className="overflow-x-auto" style={{ background: C.surface, border: `1px solid ${C.rule}` }}>
+    <div className="ams-table-frame overflow-x-auto" style={{ background: C.surface }}>
       <div style={{ minWidth: 856 }}>
         {rows.length === 0 ? (
           <div className="px-5 py-12 text-center">
@@ -2018,7 +2473,7 @@ function PartsTab({ repairs, assets, onAct, onView, onDrop, onAdd, can }) {
             </div>
           </div>
         ) : (<>
-          <div style={{
+          <div className="ams-data-head" style={{
             display: "grid", gridTemplateColumns: PART_GRID, columnGap: 12,
             padding: "9px 12px 9px 15px", background: C.soft, borderBottom: `1px solid ${C.rule}`,
           }}>
@@ -2069,10 +2524,10 @@ function HistoryPanel({ asset, repairs, csv, onOpenTicket }) {
   return (
     <div className="px-5 py-4" style={{ borderTop: `1px solid ${C.ruleSoft}` }}>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <div className="flex" style={{ border: `1px solid ${C.rule}`, borderRadius: 2 }}>
+        <div className="flex" style={{ border: `1px solid ${C.rule}`, borderRadius: 11, overflow: "hidden", background: C.soft }}>
           {[["trail", "General trail", general.length], ["moves", "Transfers", chain.length], ["repairs", "Repairs", tickets.length]].map(([k, l, n]) => (
             <button key={k} onClick={() => setView(k)} className="flex items-center gap-2 px-3 py-1.5"
-              style={{ background: view === k ? C.ink : "transparent", color: view === k ? "#fff" : C.mute, fontSize: 13 }}>
+              style={{ background: view === k ? C.brand : "transparent", color: view === k ? C.brandInk : C.mute, fontSize: 13 }}>
               {l}<span style={{ fontFamily: MONO, fontSize: 10.5, opacity: 0.7 }}>{n}</span>
             </button>
           ))}
@@ -2105,7 +2560,7 @@ function HistoryPanel({ asset, repairs, csv, onOpenTicket }) {
           </div>
           <div style={{ border: `1px solid ${C.ruleSoft}` }}>
             {tickets.map((t) => {
-              const st = t.closed ? { label: `Closed ${fmt(t.closedOn)}`, color: C.retired, tint: "#F1F3F6" } : { label: STAGES[t.stage].label, color: STAGES[t.stage].color, tint: STAGES[t.stage].tint };
+              const st = t.closed ? { label: `Closed ${fmt(t.closedOn)}`, color: C.retired, tint: TINT.idle } : { label: STAGES[t.stage].label, color: STAGES[t.stage].color, tint: STAGES[t.stage].tint };
               return (
                 <button key={t.id} onClick={() => onOpenTicket(t.id)} className="w-full text-left flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-3"
                   style={{ borderBottom: `1px solid ${C.ruleSoft}`, borderLeft: `3px solid ${st.color}` }}>
@@ -2136,7 +2591,7 @@ function HistoryPanel({ asset, repairs, csv, onOpenTicket }) {
           </div>
         ) : (<>
           {held && (
-            <div className="px-3 py-3 mb-3" style={{ background: "#EAF1F6", borderLeft: `3px solid ${C.active}` }}>
+            <div className="px-3 py-3 mb-3" style={{ background: TINT.ok, borderLeft: `3px solid ${C.active}` }}>
               <Label>Held since {fmt(held.date)}</Label>
               <div style={{ fontSize: 14 }}>{asset.custodian} · {asset.location}</div>
               <div style={{ fontSize: 12.5, color: C.mute, marginTop: 1 }}>
@@ -2144,8 +2599,8 @@ function HistoryPanel({ asset, repairs, csv, onOpenTicket }) {
               </div>
             </div>
           )}
-          <div className="overflow-x-auto" style={{ border: `1px solid ${C.ruleSoft}` }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 620 }}>
+          <div className="ams-table-frame overflow-x-auto">
+            <table className="ams-table" style={{ minWidth: 620 }}>
               <thead>
                 <tr style={{ background: C.soft }}>
                   {["Date", "Project/Location", "Address", "Responsible person", "Reason", "Held"].map((h, i) => (
@@ -2155,7 +2610,7 @@ function HistoryPanel({ asset, repairs, csv, onOpenTicket }) {
               </thead>
               <tbody>
                 {shown.map((m, i) => (
-                  <tr key={m.ts + "" + i} style={{ borderBottom: `1px solid ${C.ruleSoft}`, background: m.current ? "#F6F9FB" : "transparent" }}>
+                  <tr key={m.ts + "" + i} style={{ borderBottom: `1px solid ${C.ruleSoft}`, background: m.current ? C.soft : "transparent" }}>
                     <td style={{ padding: "9px 10px", verticalAlign: "top", whiteSpace: "nowrap" }}>
                       <div style={{ fontFamily: MONO, fontSize: 11.5 }}>{fmt(m.date)}</div>
                       {m.current && <div className="uppercase" style={{ fontFamily: MONO, fontSize: 9, letterSpacing: "0.12em", color: C.active, marginTop: 2 }}>Current</div>}
@@ -2210,7 +2665,7 @@ function RepairBoard({ repairs, assets, onOpen, showClosed, setShowClosed }) {
   return (<>
     <div className="flex flex-wrap items-center gap-2 mb-3">
       <div className="relative flex-1" style={{ minWidth: 240 }}>
-        <Search size={15} style={{ color: C.mute, position: "absolute", left: 10, top: 10 }} />
+        <Search size={15} style={{ color: C.mute, position: "absolute", left: 11, top: 13 }} />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search ticket, fault, asset, provider, technician" style={{ ...inputStyle, paddingLeft: 32 }} />
       </div>
       <select value={cat} onChange={(e) => setCat(e.target.value)} style={{ ...inputStyle, width: "auto", minWidth: 170, color: cat ? C.ink : C.mute }}>
@@ -2312,7 +2767,7 @@ function RepairDetail({ job, asset, history = [], onBack, onAct, onPartAct, onVi
             </button>
           </div>
           {stage ? <Chip color={STAGES[stage].color} tint={STAGES[stage].tint} big>{STAGES[stage].label}</Chip>
-            : <Chip color={C.retired} tint="#F1F3F6" big>Closed {fmt(job.closedOn)}</Chip>}
+            : <Chip color={C.retired} tint={TINT.idle} big>Closed {fmt(job.closedOn)}</Chip>}
         </div>
       </div>
 
@@ -2436,22 +2891,19 @@ function MaintenanceTab({ plans, assets, onAdd, onLog, onEdit, onDelete, onOpenA
       <div className="flex flex-wrap gap-2">
         {[["30", "Next 30 days"], ["7", "Next 7 days"], ["0", "Overdue only"], ["all", "All schedules"]].map(([k, l]) => (
           <button key={k} onClick={() => setScope(k)} className="px-3 py-2 text-sm"
-            style={{ borderRadius: 2, border: `1px solid ${scope === k ? C.ink : C.rule}`, background: scope === k ? C.ink : C.surface, color: scope === k ? "#fff" : C.ink }}>{l}</button>
+            style={{ borderRadius: 10, border: `1px solid ${scope === k ? C.brandEdge : C.rule}`, background: scope === k ? C.brand : C.surface, color: scope === k ? C.brandInk : C.ink, fontWeight: 600 }}>{l}</button>
         ))}
       </div>
       {canManage && <Btn kind="solid" icon={Plus} onClick={onAdd}>Add schedule</Btn>}
     </div>
 
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-      {[["Overdue", overdue, C.overdue], ["Due this week", bucket("week"), "#AF6318"], ["Due this month", bucket("month"), C.active], ["Spent on maintenance", money0(spent), C.ok]].map(([l, v, col]) => (
-        <div key={l} className="px-4 py-3" style={{ background: C.surface, border: `1px solid ${C.rule}`, borderTop: `2px solid ${col}` }}>
-          <Label>{l}</Label>
-          <div style={{ fontFamily: MONO, fontSize: 22, fontWeight: 700, color: col }}>{v}</div>
-        </div>
+      {[["Overdue", overdue, C.overdue], ["Due this week", bucket("week"), C.due], ["Due this month", bucket("month"), C.active], ["Spent on maintenance", money0(spent), C.ok]].map(([l, v, col]) => (
+        <MetricTile key={l} label={l} value={v} tone={col} />
       ))}
     </div>
 
-    <div style={{ background: C.surface, border: `1px solid ${C.rule}` }}>
+    <div className="ams-table-frame" style={{ background: C.surface }}>
       {list.length === 0 ? (
         <div className="px-5 py-12 text-center">
           <div style={{ fontSize: 14, marginBottom: 4 }}>{plans.length === 0 ? "No maintenance schedules yet." : "Nothing falls in this window."}</div>
@@ -2541,23 +2993,23 @@ function PurchasingReports({ assets, repairs, csv }) {
 
   return (<>
     <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
-      <div><div style={{ fontSize: 18, fontWeight: 650 }}>Purchasing report</div><div style={{ color: C.mute, fontSize: 13 }}>Limited to parts and purchasing records inside your assigned company and asset-group scope.</div></div>
+      <div><div className="ams-section-title" style={{ fontSize: 18 }}>Purchasing report</div><div style={{ color: C.mute, fontSize: 13 }}>Limited to parts and purchasing records inside your assigned company and asset-group scope.</div></div>
       <Btn icon={Download} onClick={exportRows}>Export purchasing report</Btn>
     </div>
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
       {[["Part lines", rows.length, C.ink], ["Needed", rows.filter((row) => row.part.state === "Needed").length, PART_COLOR.Needed], ["Ordered value", money0(ordered), PART_COLOR.Ordered], ["Purchased value", money0(purchased), PART_COLOR.Purchased]].map(([label, value, color]) => (
-        <div key={label} className="px-4 py-3" style={{ background: C.surface, border: `1px solid ${C.rule}`, borderTop: `2px solid ${color}` }}><Label>{label}</Label><div style={{ fontFamily: MONO, fontSize: 22, fontWeight: 700, color }}>{value}</div></div>
+        <MetricTile key={label} label={label} value={value} tone={color} />
       ))}
     </div>
     <div className="flex flex-wrap gap-2 mb-4">
-      <div className="relative flex-1" style={{ minWidth: 250 }}><Search size={15} style={{ color: C.mute, position: "absolute", left: 10, top: 10 }} /><input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search part, supplier, order, ticket, asset, company" style={{ ...inputStyle, paddingLeft: 32 }} /></div>
+      <div className="relative flex-1" style={{ minWidth: 250 }}><Search size={15} style={{ color: C.mute, position: "absolute", left: 11, top: 13 }} /><input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search part, supplier, order, ticket, asset, company" style={{ ...inputStyle, paddingLeft: 34 }} /></div>
       <select value={state} onChange={(event) => setState(event.target.value)} style={{ ...inputStyle, width: "auto", minWidth: 160 }}><option value="">All states</option>{PART_STATES.map((value) => <option key={value}>{value}</option>)}</select>
     </div>
-    <div className="overflow-x-auto" style={{ background: C.surface, border: `1px solid ${C.rule}` }}>
-      <table style={{ width: "100%", minWidth: 920, borderCollapse: "collapse", fontSize: 12.5 }}>
+    <div className="ams-table-frame overflow-x-auto" style={{ background: C.surface }}>
+      <table className="ams-table" style={{ minWidth: 920 }}>
         <thead><tr style={{ background: C.soft }}>{["Ticket", "Asset", "Company", "Part", "State", "Qty", "Unit price", "Total", "Supplier / order"].map((heading) => <th key={heading} className="text-left px-3 py-2" style={{ color: C.mute, borderBottom: `1px solid ${C.rule}` }}>{heading}</th>)}</tr></thead>
         <tbody>{rows.length === 0 ? <tr><td colSpan={9} className="p-10 text-center" style={{ color: C.mute }}>No purchasing records match this view.</td></tr> : rows.map(({ part, repair, asset, total }) => (
-          <tr key={`${repair.id}-${part.id}`} style={{ borderBottom: `1px solid ${C.ruleSoft}` }}><td className="px-3 py-2" style={{ fontFamily: MONO }}>{repair.ticket}</td><td className="px-3 py-2">{asset.tag} · {asset.name}</td><td className="px-3 py-2">{asset.company || "—"}</td><td className="px-3 py-2">{part.name}</td><td className="px-3 py-2"><Chip color={PART_COLOR[part.state] || C.mute} tint={part.state === "Purchased" ? "#E9F4F1" : part.state === "Ordered" ? "#FBF4E4" : "#FAEEEC"}>{part.state}</Chip></td><td className="px-3 py-2">{num(part.qty) || 1}</td><td className="px-3 py-2" style={{ fontFamily: MONO }}>{money(part.unit)}</td><td className="px-3 py-2" style={{ fontFamily: MONO, fontWeight: 700 }}>{money(total)}</td><td className="px-3 py-2">{[part.supplier, part.ref].filter(Boolean).join(" · ") || "—"}</td></tr>
+          <tr key={`${repair.id}-${part.id}`} style={{ borderBottom: `1px solid ${C.ruleSoft}` }}><td className="px-3 py-2" style={{ fontFamily: MONO }}>{repair.ticket}</td><td className="px-3 py-2">{asset.tag} · {asset.name}</td><td className="px-3 py-2">{asset.company || "—"}</td><td className="px-3 py-2">{part.name}</td><td className="px-3 py-2"><Chip color={PART_COLOR[part.state] || C.mute} tint={part.state === "Purchased" ? TINT.ok : part.state === "Ordered" ? TINT.warn : TINT.alarm}>{part.state}</Chip></td><td className="px-3 py-2">{num(part.qty) || 1}</td><td className="px-3 py-2" style={{ fontFamily: MONO }}>{money(part.unit)}</td><td className="px-3 py-2" style={{ fontFamily: MONO, fontWeight: 700 }}>{money(total)}</td><td className="px-3 py-2">{[part.supplier, part.ref].filter(Boolean).join(" · ") || "—"}</td></tr>
         ))}</tbody>
       </table>
     </div>
@@ -2614,7 +3066,7 @@ function FullReports({ assets, repairs, plans, ctx, csv, openJob }) {
     rows.map((r) => [r.tag, r.code, r.body, r.company, r.name, r.category, r.location, r.custodian, r.avail.label, r.acquired, r.value, r.rep, r.mnt, r.upkeep]), `report-${today()}.csv`);
 
   return (<>
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 mb-4 px-4 py-4" style={{ background: C.surface, border: `1px solid ${C.rule}` }}>
+    <div className="ams-table-frame grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 mb-4 px-4 py-4" style={{ background: C.surface }}>
       {[["company", "Company", ctx.companyNames], ["category", "Category", ctx.categoryNames], ["location", "Address", ctx.locations], ["custodian", "Responsible person", ctx.people]].map(([k, l, opts]) => (
         <div key={k}><Label>{l}</Label>
           <select style={sel} value={f[k]} onChange={(e) => set(k, e.target.value)}>
@@ -2630,11 +3082,9 @@ function FullReports({ assets, repairs, plans, ctx, csv, openJob }) {
     </div>
 
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-      {[["Assets in query", String(rows.length), C.ink], ["Total asset value", money0(T.value), C.active],
+      {[["Assets in query", rows.length, C.ink], ["Total asset value", money0(T.value), C.active],
         ["Total repair cost", money0(T.rep), STAGES.ongoing.color], ["Total maintenance cost", money0(T.mnt), C.ok]].map(([l, v, col]) => (
-        <div key={l} className="px-4 py-3" style={{ background: C.surface, border: `1px solid ${C.rule}`, borderTop: `2px solid ${col}` }}>
-          <Label>{l}</Label><div style={{ fontFamily: MONO, fontSize: 23, fontWeight: 700, color: col, lineHeight: 1.2 }}>{v}</div>
-        </div>
+        <MetricTile key={l} label={l} value={v} tone={col} />
       ))}
     </div>
 
@@ -2673,8 +3123,8 @@ function FullReports({ assets, repairs, plans, ctx, csv, openJob }) {
     </div>
 
     {/* detail table */}
-    <div className="overflow-x-auto" style={{ background: C.surface, border: `1px solid ${C.rule}` }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1060 }}>
+    <div className="ams-table-frame overflow-x-auto" style={{ background: C.surface }}>
+      <table className="ams-table" style={{ minWidth: 1060 }}>
         <thead>
           <tr style={{ background: C.soft }}>
             {["Asset no.", "Asset code", "Asset", "Company", "Category", "Address", "Responsible", "Availability", "Value", "Repairs", "Maintenance", "Upkeep"].map((h, i) => (

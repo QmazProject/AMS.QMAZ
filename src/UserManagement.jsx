@@ -3,10 +3,12 @@ import { Check, KeyRound, Pencil, Plus, RefreshCw, ShieldCheck, UserRound, X } f
 import { supabase } from './lib/supabase.js'
 
 const COLORS = {
-  ink: '#141C26', mute: '#69747F', rule: '#CCD4DE', softRule: '#E2E7EE',
-  surface: '#FFFFFF', soft: '#FAFBFC', active: '#1F5E8C', ok: '#2E7D6B', danger: '#A6392B',
+  ink: 'var(--ams-text)', mute: 'var(--ams-mute)', rule: 'var(--ams-line)', softRule: 'var(--ams-line-soft)',
+  surface: 'var(--ams-surface)', soft: 'var(--ams-surface-2)', active: 'var(--ams-ok)',
+  ok: 'var(--ams-ok)', danger: 'var(--ams-alarm)', head: 'var(--ams-head)',
+  brand: 'var(--ams-yellow)', brandInk: 'var(--ams-on-yellow)', brandEdge: 'var(--ams-yellow-deep)',
 }
-const input = { width: '100%', border: `1px solid ${COLORS.rule}`, borderRadius: 3, padding: '8px 9px', fontSize: 13.5, background: '#fff' }
+const input = { width: '100%', border: `1px solid ${COLORS.rule}`, borderRadius: 3, padding: '8px 9px', fontSize: 13.5, background: 'var(--ams-well)', color: 'var(--ams-text)' }
 const emptyForm = {
   id: '', fullName: '', username: '', email: '', password: '', role: 'custodian', isActive: true,
   allCompanies: false, allAssetGroups: false, companyIds: [], assetGroupIds: [],
@@ -37,7 +39,7 @@ const permissionMatrix = [
 function Button({ children, onClick, icon: Icon, primary, danger, disabled, type = 'button' }) {
   return (
     <button type={type} disabled={disabled} onClick={onClick} className="inline-flex items-center justify-center gap-2 px-3 py-2"
-      style={{ border: `1px solid ${primary ? COLORS.ink : danger ? COLORS.danger : COLORS.rule}`, background: primary ? COLORS.ink : '#fff', color: primary ? '#fff' : danger ? COLORS.danger : COLORS.ink, borderRadius: 3, fontSize: 13, opacity: disabled ? 0.5 : 1 }}>
+      style={{ border: `1px solid ${primary ? COLORS.brandEdge : danger ? COLORS.danger : COLORS.rule}`, background: primary ? 'linear-gradient(180deg,var(--ams-yellow-hi) 0%,var(--ams-yellow) 44%,var(--ams-yellow-deep) 100%)' : 'var(--ams-surface)', color: primary ? COLORS.brandInk : danger ? COLORS.danger : COLORS.ink, borderRadius: 3, fontSize: 13, opacity: disabled ? 0.5 : 1 }}>
       {Icon && <Icon size={14} />}{children}
     </button>
   )
@@ -89,7 +91,7 @@ function UserForm({ value, roles, companies, assetGroups, onClose, onSave, busy 
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(20,28,38,.48)' }} onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(12,14,22,.50)' }} onMouseDown={onClose}>
       <form onSubmit={submit} onMouseDown={(event) => event.stopPropagation()} className="w-full overflow-auto" style={{ maxWidth: 780, maxHeight: '94vh', background: COLORS.surface, borderRadius: 3 }}>
         <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: `1px solid ${COLORS.softRule}` }}>
           <div>
@@ -117,8 +119,8 @@ function UserForm({ value, roles, companies, assetGroups, onClose, onSave, busy 
             <ScopePicker title="Asset Group Access" allLabel="All Asset Groups" all={superAdmin || form.allAssetGroups} disabled={superAdmin}
               onAll={(next) => set('allAssetGroups', next)} items={assetGroups} selected={form.assetGroupIds} onToggle={(id) => toggle('assetGroupIds', id)} />
           </div>
-          {superAdmin && <div className="sm:col-span-2 p-3" style={{ background: '#EAF1F7', color: COLORS.active, fontSize: 13 }}>Super Admin accounts are always active and automatically receive all-company and all-asset-group access.</div>}
-          {error && <div className="sm:col-span-2 p-3" style={{ background: '#FAEEEC', color: COLORS.danger, fontSize: 13 }}>{error}</div>}
+          {superAdmin && <div className="sm:col-span-2 p-3" style={{ background: 'var(--ams-ok-tint)', color: COLORS.active, fontSize: 13 }}>Super Admin accounts are always active and automatically receive all-company and all-asset-group access.</div>}
+          {error && <div className="sm:col-span-2 p-3" style={{ background: 'var(--ams-alarm-tint)', color: COLORS.danger, fontSize: 13 }}>{error}</div>}
         </div>
         <div className="flex justify-end gap-2 px-5 py-4" style={{ borderTop: `1px solid ${COLORS.softRule}`, background: COLORS.soft }}>
           <Button onClick={onClose}>Cancel</Button><Button type="submit" primary disabled={busy}>{busy ? 'Saving…' : editing ? 'Save access' : 'Create user'}</Button>
@@ -206,15 +208,15 @@ export default function UserManagement() {
         <div><h2 style={{ fontSize: 19, fontWeight: 650 }}>User Management</h2><p style={{ color: COLORS.mute, fontSize: 13 }}>Create accounts and combine role permissions with company and asset-group scope.</p></div>
         <div className="flex gap-2"><Button icon={RefreshCw} onClick={load}>Refresh</Button><Button icon={Plus} primary onClick={() => setForm({ ...emptyForm })}>Create user</Button></div>
       </div>
-      {error && <div className="mb-3 p-3" style={{ background: '#FAEEEC', color: COLORS.danger, fontSize: 13 }}>{error}</div>}
-      {notice && <div className="mb-3 p-3" style={{ background: '#E9F4F1', color: COLORS.ok, fontSize: 13 }}>{notice}</div>}
+      {error && <div className="mb-3 p-3" style={{ background: 'var(--ams-alarm-tint)', color: COLORS.danger, fontSize: 13 }}>{error}</div>}
+      {notice && <div className="mb-3 p-3" style={{ background: 'var(--ams-ok-tint)', color: COLORS.ok, fontSize: 13 }}>{notice}</div>}
 
       <div className="grid lg:grid-cols-[minmax(300px,0.85fr)_minmax(360px,1.15fr)] gap-4 items-start">
         <section style={{ background: COLORS.surface, border: `1px solid ${COLORS.rule}` }}>
           <div className="px-4 py-3" style={{ borderBottom: `1px solid ${COLORS.softRule}`, color: COLORS.mute, fontSize: 12 }}>{data.users.length} MANAGED ACCOUNT{data.users.length === 1 ? '' : 'S'}</div>
           {!data.users.length ? <div className="p-8 text-center" style={{ color: COLORS.mute, fontSize: 13 }}>No managed accounts yet.</div> : data.users.map((user) => (
             <button key={user.id} onClick={() => setSelectedId(user.id)} className="w-full text-left px-4 py-3 flex items-start gap-3"
-              style={{ borderBottom: `1px solid ${COLORS.softRule}`, borderLeft: `3px solid ${selectedId === user.id ? COLORS.active : 'transparent'}`, background: selectedId === user.id ? '#F1F5F9' : '#fff' }}>
+              style={{ borderBottom: `1px solid ${COLORS.softRule}`, borderLeft: `3px solid ${selectedId === user.id ? COLORS.active : 'transparent'}`, background: selectedId === user.id ? 'var(--ams-surface-2)' : 'transparent' }}>
               <UserRound size={17} style={{ color: user.isActive ? COLORS.active : COLORS.mute, marginTop: 2 }} />
               <div className="min-w-0 flex-1"><div className="truncate" style={{ fontSize: 14, fontWeight: 600 }}>{user.fullName}</div><div className="truncate" style={{ color: COLORS.mute, fontSize: 12.5 }}>{user.email}</div><div style={{ color: COLORS.active, fontSize: 11.5, marginTop: 2 }}>{user.roleName}</div></div>
               <span style={{ color: user.isActive ? COLORS.ok : COLORS.danger, fontSize: 11.5 }}>{user.isActive ? 'ACTIVE' : 'INACTIVE'}</span>

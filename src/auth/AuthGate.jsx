@@ -2,14 +2,15 @@ import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, LogOut } from 'lucide-react'
 import { supabase, supabaseConfigured } from '../lib/supabase.js'
 import SignIn from './SignIn.jsx'
+import { ROUTES, navigate, usePath } from '../router.js'
 
 const CenterMessage = ({ title, children, action }) => (
-  <main className="min-h-screen flex items-center justify-center p-6" style={{ background: '#E7EAF0', color: '#141C26' }}>
-    <div className="w-full p-6 text-center" style={{ maxWidth: 480, background: '#fff', border: '1px solid #CCD4DE' }}>
-      <AlertTriangle size={25} style={{ color: '#A6392B', margin: '0 auto 10px' }} />
+  <main className="min-h-screen flex items-center justify-center p-6" style={{ background: 'var(--ams-bg)', color: 'var(--ams-text)' }}>
+    <div className="w-full p-6 text-center" style={{ maxWidth: 480, background: 'var(--ams-surface)', border: '1px solid var(--ams-line)', borderTop: '3px solid var(--ams-yellow)' }}>
+      <AlertTriangle size={25} style={{ color: 'var(--ams-alarm)', margin: '0 auto 10px' }} />
       <h1 style={{ fontSize: 17, fontWeight: 650 }}>{title}</h1>
-      <div style={{ color: '#69747F', fontSize: 13.5, marginTop: 7, lineHeight: 1.5 }}>{children}</div>
-      {action && <button onClick={action} className="mt-5 inline-flex items-center gap-2 px-4 py-2" style={{ border: '1px solid #CCD4DE', fontSize: 13 }}><LogOut size={14} />Sign out</button>}
+      <div style={{ color: 'var(--ams-mute)', fontSize: 13.5, marginTop: 7, lineHeight: 1.5 }}>{children}</div>
+      {action && <button onClick={action} className="mt-5 inline-flex items-center gap-2 px-4 py-2" style={{ border: '1px solid var(--ams-line)', fontSize: 13 }}><LogOut size={14} />Sign out</button>}
     </div>
   </main>
 )
@@ -30,14 +31,14 @@ function PasswordRecovery({ onComplete }) {
     else onComplete()
   }
   return (
-    <main className="min-h-screen flex items-center justify-center p-6" style={{ background: '#E7EAF0', color: '#141C26' }}>
-      <form onSubmit={submit} className="w-full p-6" style={{ maxWidth: 390, background: '#fff', border: '1px solid #CCD4DE' }}>
+    <main className="min-h-screen flex items-center justify-center p-6" style={{ background: 'var(--ams-bg)', color: 'var(--ams-text)' }}>
+      <form onSubmit={submit} className="w-full p-6" style={{ maxWidth: 390, background: 'var(--ams-surface)', border: '1px solid var(--ams-line)', borderTop: '3px solid var(--ams-yellow)' }}>
         <h1 style={{ fontSize: 18, fontWeight: 650 }}>Choose a new password</h1>
-        <p className="mb-4" style={{ color: '#69747F', fontSize: 13 }}>This recovery session is temporary. Set the password before continuing.</p>
-        {error && <div className="mb-3 p-3" style={{ background: '#FAEEEC', color: '#A6392B', fontSize: 13 }}>{error}</div>}
-        <input type="password" required minLength={8} autoComplete="new-password" placeholder="New password" value={password} onChange={(event) => setPassword(event.target.value)} className="w-full mb-3 px-3 py-2" style={{ border: '1px solid #CCD4DE' }} />
-        <input type="password" required minLength={8} autoComplete="new-password" placeholder="Confirm new password" value={confirm} onChange={(event) => setConfirm(event.target.value)} className="w-full mb-4 px-3 py-2" style={{ border: '1px solid #CCD4DE' }} />
-        <button type="submit" disabled={busy} className="w-full py-2.5" style={{ background: '#141C26', color: '#fff', opacity: busy ? .55 : 1 }}>{busy ? 'Updating…' : 'Update password'}</button>
+        <p className="mb-4" style={{ color: 'var(--ams-mute)', fontSize: 13 }}>This recovery session is temporary. Set the password before continuing.</p>
+        {error && <div className="mb-3 p-3" style={{ background: 'var(--ams-alarm-tint)', color: 'var(--ams-alarm)', fontSize: 13 }}>{error}</div>}
+        <input type="password" required minLength={8} autoComplete="new-password" placeholder="New password" value={password} onChange={(event) => setPassword(event.target.value)} className="w-full mb-3 px-3 py-2" style={{ border: '1px solid var(--ams-line)' }} />
+        <input type="password" required minLength={8} autoComplete="new-password" placeholder="Confirm new password" value={confirm} onChange={(event) => setConfirm(event.target.value)} className="w-full mb-4 px-3 py-2" style={{ border: '1px solid var(--ams-line)' }} />
+        <button type="submit" disabled={busy} className="w-full py-2.5" style={{ background: 'linear-gradient(180deg,var(--ams-yellow-hi) 0%,var(--ams-yellow) 44%,var(--ams-yellow-deep) 100%)', color: 'var(--ams-on-yellow)', border: '1px solid var(--ams-yellow-deep)', fontWeight: 800, opacity: busy ? .55 : 1 }}>{busy ? 'Updating…' : 'Update password'}</button>
       </form>
     </main>
   )
@@ -100,6 +101,19 @@ export default function AuthGate({ children }) {
   const signOut = async () => {
     if (supabase) await supabase.auth.signOut()
   }
+
+  /* The session decides which screen renders, not the URL; this keeps the
+     address bar in step with it — /home while you are still at the gate,
+     /dashboard once you are through — so a refresh or a bookmark lands on the
+     screen it names. Every move replaces rather than pushes: a back button
+     that returned you to a sign-in form you have already passed would only
+     bounce you forward again. */
+  const path = usePath()
+  const admitted = Boolean(session && access?.is_active && !error && !recovering)
+  useEffect(() => {
+    if (loading) return
+    navigate(admitted ? ROUTES.dashboard : ROUTES.home, { replace: true })
+  }, [admitted, loading, path])
 
   if (!supabaseConfigured) return <SignIn configured={false} onSubmit={signIn} />
   if (recovering) return <PasswordRecovery onComplete={() => setRecovering(false)} />
