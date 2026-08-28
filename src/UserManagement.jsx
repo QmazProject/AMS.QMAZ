@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Check, KeyRound, Pencil, Plus, RefreshCw, ShieldCheck, UserRound, X } from 'lucide-react'
 import { supabase } from './lib/supabase.js'
+import { useDialogFocus, useEscapeKey } from './lib/modal.js'
 
 const COLORS = {
   ink: 'var(--ams-text)', mute: 'var(--ams-mute)', rule: 'var(--ams-line)', softRule: 'var(--ams-line-soft)',
@@ -67,6 +68,12 @@ function ScopePicker({ title, allLabel, all, onAll, items, selected, onToggle, d
 function UserForm({ value, roles, companies, assetGroups, onClose, onSave, busy }) {
   const [form, setForm] = useState(value)
   const [error, setError] = useState('')
+  const [askDiscard, setAskDiscard] = useState(false)
+  /* what the form opened with, frozen for its lifetime, so leaving can tell
+     an untouched form from one someone has filled in */
+  const [opened] = useState(() => JSON.stringify(value))
+  const panel = useRef(null)
+  const titleId = useId()
   const editing = Boolean(form.id)
   const superAdmin = form.role === 'super_admin'
   const set = (key, next) => setForm((current) => ({ ...current, [key]: next }))
@@ -74,6 +81,17 @@ function UserForm({ value, roles, companies, assetGroups, onClose, onSave, busy 
     ...current,
     [key]: current[key].includes(id) ? current[key].filter((item) => item !== id) : [...current[key], id],
   }))
+
+  /* Escape, the X and Cancel are the same intent, so they share one door:
+     nothing typed leaves at once, anything typed asks first. */
+  const requestClose = () => {
+    if (busy) return
+    if (JSON.stringify(form) !== opened) return setAskDiscard(true)
+    onClose()
+  }
+  useEscapeKey(!busy, requestClose)
+  useEscapeKey(askDiscard, () => setAskDiscard(false))
+  useDialogFocus(panel)
 
   const submit = async (event) => {
     event.preventDefault()
@@ -91,14 +109,16 @@ function UserForm({ value, roles, companies, assetGroups, onClose, onSave, busy 
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(12,14,22,.50)' }} onMouseDown={onClose}>
-      <form onSubmit={submit} onMouseDown={(event) => event.stopPropagation()} className="w-full overflow-auto" style={{ maxWidth: 780, maxHeight: '94vh', background: COLORS.surface, borderRadius: 3 }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(12,14,22,.50)' }}>
+      <div className="relative w-full" style={{ maxWidth: 780 }}>
+      <form ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
+        onSubmit={submit} className="w-full overflow-auto" style={{ maxHeight: '94vh', background: COLORS.surface, borderRadius: 3, outline: 'none' }}>
         <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: `1px solid ${COLORS.softRule}` }}>
           <div>
-            <h2 style={{ fontSize: 17, fontWeight: 650 }}>{editing ? 'Edit user access' : 'Create user account'}</h2>
+            <h2 id={titleId} style={{ fontSize: 17, fontWeight: 650 }}>{editing ? 'Edit user access' : 'Create user account'}</h2>
             <p style={{ color: COLORS.mute, fontSize: 12.5 }}>Role permissions and both data scopes are enforced together.</p>
           </div>
-          <button type="button" onClick={onClose} className="p-1"><X size={18} /></button>
+          <button type="button" onClick={requestClose} aria-label="Close" className="p-1"><X size={18} /></button>
         </div>
         <div className="p-5 grid sm:grid-cols-2 gap-4">
           <label style={{ fontSize: 12, color: COLORS.mute }}>FULL NAME<input required value={form.fullName} onChange={(e) => set('fullName', e.target.value)} style={{ ...input, marginTop: 5 }} /></label>
@@ -123,9 +143,26 @@ function UserForm({ value, roles, companies, assetGroups, onClose, onSave, busy 
           {error && <div className="sm:col-span-2 p-3" style={{ background: 'var(--ams-alarm-tint)', color: COLORS.danger, fontSize: 13 }}>{error}</div>}
         </div>
         <div className="flex justify-end gap-2 px-5 py-4" style={{ borderTop: `1px solid ${COLORS.softRule}`, background: COLORS.soft }}>
-          <Button onClick={onClose}>Cancel</Button><Button type="submit" primary disabled={busy}>{busy ? 'Saving…' : editing ? 'Save access' : 'Create user'}</Button>
+          <Button onClick={requestClose}>Cancel</Button><Button type="submit" primary disabled={busy}>{busy ? 'Saving…' : editing ? 'Save access' : 'Create user'}</Button>
         </div>
       </form>
+
+      {askDiscard && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center p-5" style={{ background: 'rgba(11,13,15,.55)' }}>
+          <div role="alertdialog" aria-modal="true" aria-label="You have unsaved changes"
+            className="p-5" style={{ maxWidth: 380, background: COLORS.surface, border: `1px solid ${COLORS.rule}`, borderRadius: 3 }}>
+            <div style={{ fontSize: 15.5, fontWeight: 650 }}>You have unsaved changes</div>
+            <div style={{ fontSize: 13.5, color: COLORS.mute, marginTop: 6, lineHeight: 1.5 }}>
+              Closing this form now discards what you have entered. Nothing has been saved yet.
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <Button onClick={() => setAskDiscard(false)}>Keep editing</Button>
+              <Button primary onClick={onClose}>Discard changes</Button>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
     </div>
   )
 }

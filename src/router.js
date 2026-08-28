@@ -26,6 +26,21 @@ export function navigate(to, { replace = false } = {}) {
   window.dispatchEvent(new Event(NAVIGATION))
 }
 
+/* A QR code on a printed form arrives as ?transfer=<id>. The value is read
+   once and then dropped from the address, so refreshing the page later does
+   not reopen a form somebody scanned days ago. */
+export const readQuery = (name) =>
+  (typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get(name))
+
+export function dropQuery(name) {
+  if (typeof window === 'undefined') return
+  const params = new URLSearchParams(window.location.search)
+  if (!params.has(name)) return
+  params.delete(name)
+  const query = params.toString()
+  window.history.replaceState({}, '', window.location.pathname + (query ? `?${query}` : ''))
+}
+
 export function usePath() {
   const [path, setPath] = useState(readPath)
   useEffect(() => {
