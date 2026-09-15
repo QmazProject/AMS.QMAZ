@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase.js'
 const RECEIPT_BUCKET = 'asset-receipts'
 const TRANSFER_BUCKET = 'transfer-forms'
 const PHOTO_BUCKET = 'asset-photos'
+const DOC_BUCKET = 'asset-documents'
 const LOGO_BUCKET = 'company-logos'
 const NO_PROJECT = 'X'
 
@@ -11,10 +12,12 @@ const COLUMNS = {
   people: 'id,first_name,middle_name,last_name,is_active,notes',
   categories: 'id,name,notes',
   projects: 'id,project_code,address,latitude,longitude,notes',
-  assets: 'id,asset_number,asset_code,company_id,category_id,project_location_id,name,brand,model,photo_path,serial_number,engine_number,plate_number,mv_file_number,conduction_sticker,body_number,status,current_address,current_custodian,acquired_on,acquisition_cost,notes,retired_on,retirement_reason,retirement_details,revision',
+  assets: 'id,asset_number,asset_code,company_id,category_id,project_location_id,name,brand,model,photo_path,serial_number,engine_number,plate_number,mv_file_number,conduction_sticker,body_number,status,current_address,current_custodian,acquired_on,acquisition_cost,notes,retired_on,retirement_reason,retirement_details,revision,created_at',
   brands: 'id,name,notes',
   models: 'id,brand_id,name,notes',
   transferAttachments: 'id,transfer_id,storage_bucket,storage_object_path,original_filename,mime_type,size_bytes,note,uploaded_by_name,created_at',
+  assetAttachments: 'id,asset_id,storage_bucket,storage_object_path,original_filename,doc_type,mime_type,size_bytes,note,created_at',
+  assetImages: 'id,asset_id,storage_bucket,storage_object_path,position,created_at',
   transfers: 'id,asset_id,transfer_number,recorded_by_name,from_project_location_id,to_project_location_id,from_address,to_address,from_custodian,to_custodian,effective_on,reason,reference,created_at',
   repairs: 'id,ticket_number,asset_id,stage,outcome,fault,reported_by_name,service_provider,hold_address,reported_on,target_completion_on,technician_name,started_on,work_done,repair_completed_on,test_result,labor_cost,other_cost,return_address,returned_to_name,closed_on,closure_reason',
   parts: 'id,repair_ticket_id,name,state,quantity,estimated_amount,unit_price,supplier,needed_on,ordered_on,purchased_on,order_reference,created_at',
@@ -89,6 +92,36 @@ function mapTransfer(row, projectById) {
   }
 }
 
+/* One filed form, as the panel reads it. Shared so a form that has just been
+   uploaded takes exactly the shape of one that came back from a full load, and
+   can be dropped straight into state without refetching the register. */
+const attachmentFromRow = (row) => ({
+  id: row.id, transferId: row.transfer_id, bucket: row.storage_bucket, path: row.storage_object_path,
+  name: row.original_filename, type: row.mime_type, size: Number(row.size_bytes), note: row.note || '',
+  at: String(row.created_at).slice(0, 10),
+  /* the audit trail on the paperwork: when it was filed, and by whom */
+  by: row.uploaded_by_name || '',
+})
+
+/* A document filed against the asset itself rather than against a movement of
+   it. `label` is what the register calls the paper and `docType` is what kind
+   of paper it is; both are the user's words, not the scanner's. */
+/* A photograph of the asset. The bucket is public, so the url resolves
+   without signing and the register can draw a list of thumbnails without a
+   round trip per row. */
+const assetImageFromRow = (row) => ({
+  id: row.id, assetId: row.asset_id, bucket: row.storage_bucket, path: row.storage_object_path,
+  position: row.position, url: assetPhotoUrl(row.storage_object_path),
+  at: String(row.created_at).slice(0, 10),
+})
+
+const assetAttachmentFromRow = (row) => ({
+  id: row.id, assetId: row.asset_id, bucket: row.storage_bucket, path: row.storage_object_path,
+  label: row.original_filename, docType: row.doc_type, type: row.mime_type,
+  size: Number(row.size_bytes), note: row.note || '',
+  at: String(row.created_at).slice(0, 10),
+})
+
 export async function loadOperationalData() {
   const client = db()
   const requests = [
@@ -116,7 +149,21 @@ export async function loadOperationalData() {
     (result) => (result.error ? '' : String(result.data || '')),
     () => '',
   )
-  const results = await Promise.all(requests)
+  /* Same reasoning, for the same reason: an asset's documents and its extra
+     photographs arrived after this register was first deployed, so a database
+     that has not run those migrations yet loads without them rather than not
+     at all. A missing table is an empty list, not a broken workspace. */
+  const optionalRows = (query) => query.then(
+    (result) => (result.error ? [] : (result.data || [])),
+    () => [],
+  )
+  const documentRequest = optionalRows(
+    client.from('asset_attachments').select(COLUMNS.assetAttachments).is('removed_at', null).order('created_at'),
+  )
+  const imageRequest = optionalRows(
+    client.from('asset_images').select(COLUMNS.assetImages).is('removed_at', null).order('position').order('created_at'),
+  )
+  const [results, documentRows, imageRows] = await Promise.all([Promise.all(requests), documentRequest, imageRequest])
   const labels = ['companies', 'asset groups', 'projects/locations', 'assets', 'transfers', 'repairs', 'parts', 'receipts', 'maintenance schedules', 'maintenance history', 'activity history', 'responsible persons', 'responsible person companies', 'transfer attachments', 'brands', 'models']
   results.forEach((result, index) => resultData(result, `Could not load ${labels[index]}`))
   const [companyRows, categoryRows, projectRows, assetRows, transferRows, repairRows, partRows, receiptRows, scheduleRows, completionRows, activityRows, personRows, personCompanyRows, attachmentRows, brandRows, modelRows] = results.map((result) => result.data || [])
@@ -161,18 +208,20 @@ export async function loadOperationalData() {
   })
   const filesByTransfer = new Map()
   attachmentRows.forEach((row) => {
-    filesByTransfer.set(row.transfer_id, [...(filesByTransfer.get(row.transfer_id) || []), {
-      id: row.id, transferId: row.transfer_id, bucket: row.storage_bucket, path: row.storage_object_path,
-      name: row.original_filename, type: row.mime_type, size: Number(row.size_bytes), note: row.note || '',
-      at: String(row.created_at).slice(0, 10),
-      /* the audit trail on the paperwork: when it was filed, and by whom */
-      by: row.uploaded_by_name || '',
-    }])
+    filesByTransfer.set(row.transfer_id, [...(filesByTransfer.get(row.transfer_id) || []), attachmentFromRow(row)])
   })
   transferRows.forEach((row) => activityByAsset.set(row.asset_id, [
     ...(activityByAsset.get(row.asset_id) || []),
     { ...mapTransfer(row, projectById), files: filesByTransfer.get(row.id) || [] },
   ]))
+  const picturesByAsset = new Map()
+  imageRows.forEach((row) => {
+    picturesByAsset.set(row.asset_id, [...(picturesByAsset.get(row.asset_id) || []), assetImageFromRow(row)])
+  })
+  const docsByAsset = new Map()
+  documentRows.forEach((row) => {
+    docsByAsset.set(row.asset_id, [...(docsByAsset.get(row.asset_id) || []), assetAttachmentFromRow(row)])
+  })
   const receiptsByPart = new Map(receiptRows.map((row) => [row.repair_part_id, {
     id: row.id, name: row.original_filename, type: row.mime_type, size: Number(row.size_bytes),
     at: row.receipt_date || String(row.created_at).slice(0, 10), path: row.storage_object_path, bucket: row.storage_bucket,
@@ -191,10 +240,23 @@ export async function loadOperationalData() {
     id: row.id, tag: row.asset_number, code: row.asset_code || '', companyId: row.company_id, company: companyById.get(row.company_id)?.name || '', categoryId: row.category_id,
     category: categoryById.get(row.category_id)?.name || '', projectId: row.project_location_id, project: projectById.get(row.project_location_id)?.project_code || NO_PROJECT,
     name: row.name, brand: row.brand || '', model: row.model || '',
-    photoPath: row.photo_path || '', photoUrl: row.photo_path ? assetPhotoUrl(row.photo_path) : '', serial: row.serial_number || '', engine: row.engine_number || '', plate: row.plate_number || '', mvFile: row.mv_file_number || '', conduction: row.conduction_sticker || '', body: row.body_number || '',
+    /* Every picture of this machine, in the order somebody chose. The first
+       is the cover: photo_path is kept pointing at the same object for the
+       trigger and for anything reading the column, but the list is what
+       decides, so the two drifting apart can never show the wrong picture. */
+    images: picturesByAsset.get(row.id) || [],
+    photoPath: (picturesByAsset.get(row.id) || [])[0]?.path || row.photo_path || '',
+    photoUrl: (picturesByAsset.get(row.id) || [])[0]?.url || (row.photo_path ? assetPhotoUrl(row.photo_path) : ''), serial: row.serial_number || '', engine: row.engine_number || '', plate: row.plate_number || '', mvFile: row.mv_file_number || '', conduction: row.conduction_sticker || '', body: row.body_number || '',
     status: row.status, location: row.current_address, custodian: row.current_custodian, acquired: row.acquired_on || '', cost: row.acquisition_cost ?? '', notes: row.notes || '',
     retiredOn: row.retired_on, retirementReason: row.retirement_reason, retirementDetails: row.retirement_details, revision: row.revision,
+    /* when the record was written, which is not the same as when the machine
+       was bought — the register lists by the former so the newest work is on
+       top, and reports by the latter */
+    created: row.created_at || '',
     history: [...(activityByAsset.get(row.id) || [])].sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.ts - b.ts),
+    /* the invoice, the registration, the deed - whatever paperwork proves this
+       machine is the company's */
+    files: docsByAsset.get(row.id) || [],
   }))
   const repairs = repairRows.map((row) => ({
     id: row.id, assetId: row.asset_id, ticket: row.ticket_number, stage: row.stage, outcome: row.outcome, fault: row.fault, reportedBy: row.reported_by_name || '', provider: row.service_provider || '', holdAddress: row.hold_address || '', date: row.reported_on, due: row.target_completion_on || '',
@@ -255,8 +317,30 @@ export async function reinstateAsset(id, value) {
   return resultData(await db().rpc('reinstate_asset', { p_asset_id: id, p_project_location_id: value.projectId || null, p_address: value.location.trim(), p_custodian: value.custodian.trim(), p_effective_on: value.date, p_reason: optional(value.reason) }), 'Could not reinstate asset')
 }
 
+/* Where the asset is now, and where the form says it is going. The origin is
+   read off the asset rather than the form, so two assets moved together each
+   keep their own. */
+const transferRow = (asset, value) => ({
+  asset_id: asset.id,
+  from_project_location_id: asset.projectId || null, to_project_location_id: value.projectId || null,
+  from_address: asset.location, to_address: value.location.trim(),
+  from_custodian: asset.custodian, to_custodian: value.custodian.trim(),
+  effective_on: value.date, reason: optional(value.reason),
+})
+
 export async function transferAsset(asset, value) {
-  return resultData(await db().from('asset_transfers').insert({ asset_id: asset.id, from_project_location_id: asset.projectId || null, to_project_location_id: value.projectId || null, from_address: asset.location, to_address: value.location.trim(), from_custodian: asset.custodian, to_custodian: value.custodian.trim(), effective_on: value.date, reason: optional(value.reason) }).select('id').single(), 'Could not transfer asset')
+  return resultData(await db().from('asset_transfers').insert(transferRow(asset, value)).select('id').single(), 'Could not transfer asset')
+}
+
+/* A cartful going to one place. One insert, so the movements are recorded
+   together or not at all — a half-moved cart is worse than none, because the
+   register would then disagree with the single sheet signed for all of them. */
+export async function transferAssets(assets, value) {
+  if (!assets.length) throw new Error('The transfer cart is empty.')
+  return resultData(
+    await db().from('asset_transfers').insert(assets.map((asset) => transferRow(asset, value))).select('id,transfer_number'),
+    'Could not transfer the assets',
+  )
 }
 
 export const createRepair = async (assetId, value) => resultData(await db().from('repair_tickets').insert({ asset_id: assetId, ...(optional(value.ticket) ? { ticket_number: optional(value.ticket) } : {}), fault: value.fault.trim(), reported_by_name: optional(value.reportedBy), service_provider: optional(value.provider), hold_address: optional(value.location), reported_on: value.date, target_completion_on: optional(value.due) }).select('id,ticket_number').single(), 'Could not open repair ticket')
@@ -492,13 +576,116 @@ export async function uploadAssetPhoto(file) {
 
 /* Deleted after the row is saved, so a failed save never leaves an asset
    pointing at a file that is gone. */
+/* The rows that say which photographs an asset has, and in what order. The
+   objects themselves go up through uploadAssetPhoto, exactly as the single
+   photo always did - this only records them against the asset. */
+export const saveAssetImage = async (assetId, path, position) => assetImageFromRow(resultData(
+  await db().from('asset_images').insert({ asset_id: assetId, storage_bucket: PHOTO_BUCKET, storage_object_path: path, position })
+    .select(COLUMNS.assetImages).single(),
+  'Could not file the asset image',
+))
+
+/* Reordering is the whole point of the list, so it is one call: the caller
+   hands over the ids in the order it wants them and each is stamped with where
+   it landed. */
+export async function setAssetImagePositions(ordered) {
+  const client = db()
+  for (const [index, id] of ordered.entries()) {
+    resultData(
+      await client.from('asset_images').update({ position: index }).eq('id', id).is('removed_at', null).select('id').single(),
+      'Could not reorder the asset images',
+    )
+  }
+}
+
+export async function removeAssetImage(image) {
+  const client = db()
+  resultData(await client.from('asset_images').update({ removed_at: new Date().toISOString() }).eq('id', image.id).is('removed_at', null).select('id').single(), 'Could not remove the asset image')
+  const removal = await client.storage.from(image.bucket || PHOTO_BUCKET).remove([image.path])
+  if (removal.error) throw new Error(`The image was removed but its stored file needs cleanup: ${removal.error.message}`)
+}
+
 export async function deleteAssetPhoto(path) {
   if (!path) return
   const removal = await db().storage.from(PHOTO_BUCKET).remove([path])
   if (removal.error) throw new Error(`The asset was saved but its old photo needs cleanup: ${removal.error.message}`)
 }
 
-export async function saveTransferAttachment(transferId, file, note = '') {
+/* ---------------------- the asset's own paperwork ------------------------
+   The invoice, the certificate of registration, the deed of sale. Same shape
+   as a filed transfer form: the object goes up under the caller's own folder,
+   then the metadata row is what decides who may read it back.
+   ------------------------------------------------------------------------ */
+
+export async function saveAssetAttachment(assetId, file, { label = '', docType = '' } = {}) {
+  const client = db()
+  const kind = String(docType || '').trim()
+  if (!kind) throw new Error('A filed document needs a type.')
+  const user = resultData(await client.auth.getUser(), 'Could not verify who is filing the document').user
+  if (!user) throw new Error('You must be signed in to attach a document.')
+  const path = `${user.id}/${assetId}/${crypto.randomUUID()}-${safeFilename(file.name)}`
+  resultData(await client.storage.from(DOC_BUCKET).upload(path, file, { contentType: file.type, upsert: false }), `Could not upload ${file.name}`)
+  const metadata = await client.from('asset_attachments').insert({
+    asset_id: assetId, storage_bucket: DOC_BUCKET, storage_object_path: path,
+    original_filename: String(label || '').trim() || file.name,
+    doc_type: kind,
+    mime_type: file.type || 'application/octet-stream', size_bytes: file.size,
+  }).select(COLUMNS.assetAttachments).single()
+  if (metadata.error) {
+    /* the row is what makes the object readable, so an orphan is worse than none */
+    await client.storage.from(DOC_BUCKET).remove([path])
+    resultData(metadata, `Could not file ${file.name}`)
+  }
+  return assetAttachmentFromRow(metadata.data)
+}
+
+/* Correcting the label or the type changes only what the register calls the
+   document. The stored object keeps its path, so nothing has to be moved. */
+export async function updateAssetAttachment(id, { label, docType }) {
+  const clean = String(label || '').trim()
+  const kind = String(docType || '').trim()
+  if (!clean) throw new Error('A filed document needs a name.')
+  if (!kind) throw new Error('A filed document needs a type.')
+  return assetAttachmentFromRow(resultData(
+    await db().from('asset_attachments').update({ original_filename: clean, doc_type: kind }).eq('id', id).is('removed_at', null).select(COLUMNS.assetAttachments).single(),
+    'Could not update the filed document',
+  ))
+}
+
+export async function removeAssetAttachment(attachment) {
+  const client = db()
+  resultData(await client.from('asset_attachments').update({ removed_at: new Date().toISOString() }).eq('id', attachment.id).is('removed_at', null).select('id').single(), 'Could not remove the document')
+  const removal = await client.storage.from(attachment.bucket || DOC_BUCKET).remove([attachment.path])
+  if (removal.error) throw new Error(`The document was removed but its stored file needs cleanup: ${removal.error.message}`)
+}
+
+export async function getAssetAttachmentUrl(attachment) {
+  return resultData(await db().storage.from(attachment.bucket || DOC_BUCKET).createSignedUrl(attachment.path, 120), 'Could not open the document').signedUrl
+}
+
+/* Thumbnails for a whole panel in one round trip rather than one per picture.
+   The bucket is private, so every scan shown has to be signed for; an hour is
+   long enough that a panel left open does not go blank, and short enough that
+   a URL copied out of the page stops working. Returns what it could sign,
+   keyed by attachment id - a document that will not sign simply has no
+   thumbnail, which is a gap in a grid rather than a broken panel. */
+export async function getAssetAttachmentUrls(attachments) {
+  const wanted = (attachments || []).filter((one) => one && one.path)
+  if (!wanted.length) return {}
+  const signed = await db().storage.from(DOC_BUCKET).createSignedUrls(wanted.map((one) => one.path), 3600)
+  if (signed.error) return {}
+  const byPath = new Map((signed.data || []).filter((row) => row.signedUrl).map((row) => [row.path, row.signedUrl]))
+  return Object.fromEntries(
+    wanted.map((one) => [one.id, byPath.get(one.path) || '']).filter(([, url]) => url),
+  )
+}
+
+/* `name` is what the register calls this piece of paperwork, which is not
+   what the phone called the picture — a camera roll hands over things like
+   cf727768-1337-4703-b3dc-44f767a6e3fb.jpg, which tells a later reader
+   nothing. The name the file arrived under is not lost: safeFilename puts it
+   in the storage path. */
+export async function saveTransferAttachment(transferId, file, { name = '', note = '' } = {}) {
   const client = db()
   const user = resultData(await client.auth.getUser(), 'Could not verify who is filing the form').user
   if (!user) throw new Error('You must be signed in to attach a form.')
@@ -506,14 +693,28 @@ export async function saveTransferAttachment(transferId, file, note = '') {
   resultData(await client.storage.from(TRANSFER_BUCKET).upload(path, file, { contentType: file.type, upsert: false }), 'Could not upload the signed form')
   const metadata = await client.from('asset_transfer_attachments').insert({
     transfer_id: transferId, storage_bucket: TRANSFER_BUCKET, storage_object_path: path,
-    original_filename: file.name, mime_type: file.type || 'application/octet-stream', size_bytes: file.size, note: optional(note),
-  }).select('id').single()
+    original_filename: String(name || '').trim() || file.name,
+    mime_type: file.type || 'application/octet-stream', size_bytes: file.size, note: optional(note),
+  }).select(COLUMNS.transferAttachments).single()
   if (metadata.error) {
     /* the row is what makes the file readable, so an orphan is worse than none */
     await client.storage.from(TRANSFER_BUCKET).remove([path])
     resultData(metadata, 'Could not file the signed form')
   }
-  return metadata.data
+  /* the uploader's name is filled in by a trigger, so the returned row is the
+     complete record and the panel does not have to reload to show it */
+  return attachmentFromRow(metadata.data)
+}
+
+/* Correcting the name later changes only the label. The stored object keeps
+   its path, so nothing has to be moved and no link goes stale. */
+export async function renameTransferAttachment(id, name) {
+  const clean = String(name || '').trim()
+  if (!clean) throw new Error('The filed form needs a name.')
+  return attachmentFromRow(resultData(
+    await db().from('asset_transfer_attachments').update({ original_filename: clean }).eq('id', id).is('removed_at', null).select(COLUMNS.transferAttachments).single(),
+    'Could not rename the filed form',
+  ))
 }
 
 export async function removeTransferAttachment(attachment) {
@@ -531,4 +732,4 @@ export async function getReceiptUrl(receipt) {
   return resultData(await db().storage.from(receipt.bucket || RECEIPT_BUCKET).createSignedUrl(receipt.path, 120), 'Could not open receipt').signedUrl
 }
 
-export const operationalMapping = Object.freeze({ assets: 'assets', transfers: 'asset_transfers', custody: 'asset_transfers + assets', repairs: 'repair_tickets', parts: 'repair_parts', purchasing: 'repair_parts + repair_part_receipts', maintenance: 'maintenance_schedules + maintenance_completions', companies: 'companies', assetGroups: 'asset_categories', projects: 'project_locations', activity: 'asset_activity', audit: 'asset_audit_log', receipts: 'storage:asset-receipts', companyLogos: 'storage:company-logos', assetPhotos: 'storage:asset-photos', transferForms: 'asset_transfer_attachments + storage:transfer-forms' })
+export const operationalMapping = Object.freeze({ assets: 'assets', transfers: 'asset_transfers', custody: 'asset_transfers + assets', repairs: 'repair_tickets', parts: 'repair_parts', purchasing: 'repair_parts + repair_part_receipts', maintenance: 'maintenance_schedules + maintenance_completions', companies: 'companies', assetGroups: 'asset_categories', projects: 'project_locations', activity: 'asset_activity', audit: 'asset_audit_log', receipts: 'storage:asset-receipts', companyLogos: 'storage:company-logos', assetPhotos: 'asset_images + storage:asset-photos', transferForms: 'asset_transfer_attachments + storage:transfer-forms', assetDocuments: 'asset_attachments + storage:asset-documents' })

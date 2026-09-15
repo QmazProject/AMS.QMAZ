@@ -19,45 +19,61 @@ const escape = (value) => String(value ?? "")
 /* The movement a scanned form should open. */
 export const transferDeepLink = (transferId) => appLink({ transfer: transferId })
 
-/* The pad this replaces has eleven ruled lines; the register only ever prints
-   one item per transfer, so the rest is there to look like the pad. Seven is
-   what leaves the signature boxes, the code and the control number together on
-   a single sheet, which matters more than matching the line count. */
-const BLANK_ROWS = 7
+/* The pad this replaces has eleven ruled lines. Eight is what leaves the
+   signature boxes, the code and the control number together on a single sheet,
+   which matters more than matching the line count. A movement of one asset
+   fills the first line and the rest are there to look like the pad; a cart
+   fills as many as it holds, and only pads out what is left. */
+const SHEET_ROWS = 8
 
 const tick = (on) => `<span class="box">${on ? "&#10007;" : ""}</span>`
 
+/* the paper says what moved, then every number the register holds for it,
+   slash separated in register order, so the yard can match the line by
+   whichever one is stencilled on the machine. The asset number is dropped when
+   the name itself fell back to it, so it is never printed twice. Brand and
+   model are register detail rather than identification, and are deliberately
+   not printed here. */
+const identOf = (asset = {}) => [
+  ["Asset no.", asset.name ? asset.tag : ""],
+  ["Asset code", asset.code],
+  ["Serial no.", asset.serial],
+  ["Body no.", asset.body],
+].filter(([, value]) => value)
+  .map(([label, value]) => `${escape(label)} ${escape(value)}`)
+  .join(" / ")
+
+/* One ruled line. A single movement makes one of these from the asset it
+   names; a cart makes one per asset it holds, each carrying its own origin
+   because the assets are only alike in where they are going. */
+export const transferFormItem = (asset = {}, movement = {}) => ({
+  date: movement.date || "",
+  name: asset.name || asset.tag || "",
+  ident: identOf(asset),
+  fromLoc: movement.fromLoc ?? asset.location ?? "",
+  fromProject: movement.fromProject ?? asset.project ?? "",
+  toLoc: movement.toLoc || "",
+  toProject: movement.toProject || "",
+  fromPer: movement.fromPer ?? asset.custodian ?? "",
+})
+
 export function transferFormHtml({ company = {}, asset = {}, movement = {} }) {
-  /* the paper says what moved, then every number the register holds for it,
-     slash separated in register order, so the yard can match the line by
-     whichever one is stencilled on the machine. The asset number is dropped
-     when the name itself fell back to it, so it is never printed twice.
-     Brand and model are register detail rather than identification, and are
-     deliberately not printed here. */
-  const name = asset.name || asset.tag || ""
-  const ident = [
-    ["Asset no.", asset.name ? asset.tag : ""],
-    ["Asset code", asset.code],
-    ["Serial no.", asset.serial],
-    ["Body no.", asset.body],
-  ].filter(([, value]) => value)
-    .map(([label, value]) => `${escape(label)} ${escape(value)}`)
-    .join(" / ")
-  const rows = [`
+  const items = movement.items?.length ? movement.items : [transferFormItem(asset, movement)]
+  const rows = items.map((item, index) => `
     <tr>
-      <td class="c">1</td>
-      <td class="c">${escape(movement.date || "")}</td>
+      <td class="c">${index + 1}</td>
+      <td class="c">${escape(item.date || "")}</td>
       <td>
-        <div class="strong">${escape(name)}</div>
-        ${ident ? `<div class="small">${ident}</div>` : ""}
+        <div class="strong">${escape(item.name || "")}</div>
+        ${item.ident ? `<div class="small">${item.ident}</div>` : ""}
       </td>
       <td class="c">1</td>
-      <td>${escape(movement.fromLoc || "")}${movement.fromProject ? `<div class="small">${escape(movement.fromProject)}</div>` : ""}</td>
-      <td>${escape(movement.toLoc || "")}${movement.toProject ? `<div class="small">${escape(movement.toProject)}</div>` : ""}</td>
+      <td>${escape(item.fromLoc || "")}${item.fromProject ? `<div class="small">${escape(item.fromProject)}</div>` : ""}</td>
+      <td>${escape(item.toLoc || "")}${item.toProject ? `<div class="small">${escape(item.toProject)}</div>` : ""}</td>
       <td></td>
-      <td>${escape(movement.fromPer || "")}</td>
-    </tr>`]
-  for (let i = 0; i < BLANK_ROWS; i += 1) {
+      <td>${escape(item.fromPer || "")}</td>
+    </tr>`)
+  for (let i = items.length; i < SHEET_ROWS; i += 1) {
     rows.push("<tr>" + "<td></td>".repeat(8) + "</tr>")
   }
 
@@ -172,9 +188,11 @@ export function transferFormHtml({ company = {}, asset = {}, movement = {} }) {
 }
 
 /* A filename somebody can find again on a desktop: the number if the movement
-   has one, the asset otherwise. */
-export const transferFormFilename = ({ asset = {}, movement = {} }) =>
-  `transfer-form-${movement.number ? `TR-${movement.number}` : (asset.tag || "asset")}.html`
+   has one, the asset otherwise, and the count when it is a cartful. */
+export const transferFormFilename = ({ asset = {}, movement = {} }) => {
+  if (movement.items?.length > 1) return `transfer-form-${movement.items.length}-assets.html`
+  return `transfer-form-${movement.number ? `TR-${movement.number}` : (asset.tag || "asset")}.html`
+}
 
 /* Saved rather than printed: the same sheet as a file, which opens and prints
    from any browser. Chrome's own print dialog is where a PDF comes from, so
@@ -185,7 +203,12 @@ export function downloadTransferForm(data) {
   const link = document.createElement("a")
   link.href = url
   link.download = transferFormFilename(data)
+  /* in the document before it is clicked: Firefox ignores a click on a
+     detached anchor, and the revoke is already deferred below */
+  link.style.display = "none"
+  document.body.appendChild(link)
   link.click()
+  link.remove()
   setTimeout(() => URL.revokeObjectURL(url), 10000)
 }
 

@@ -5,24 +5,27 @@ import * as XLSX from "xlsx";
 import {
   Plus, Search, ArrowLeftRight, Wrench, Archive, Pencil, Trash2, ChevronLeft,
   Download, Upload, X, RotateCcw, CircleDot, AlertCircle, AlertTriangle,
-  ChevronRight, ChevronDown, Package, ClipboardList, CalendarClock, CalendarCheck, BarChart3, Repeat, Coins, QrCode, ShoppingCart, Receipt, Paperclip, Settings, Building2, Tag, MapPin, Map, Layers,
+  ChevronRight, ChevronDown, Package, ShoppingBasket, ClipboardList, CalendarClock, CalendarCheck, BarChart3, Repeat, Coins, QrCode, ShoppingCart, Receipt, Paperclip, Settings, Building2, Tag, MapPin, Map as MapIcon, Layers,
   Users, LogOut, Database, Menu, CheckCircle2, Printer, Eye, FileText,
 } from "lucide-react";
 import UserManagement from "./src/UserManagement.jsx";
 import { useDialogFocus, useEscapeKey } from "./src/lib/modal.js";
 import { dropQuery, readQuery } from "./src/router.js";
 import { appLink, qrDataUri } from "./src/lib/qr.js";
-import { downloadTransferForm, printTransferForm, transferFormHtml } from "./src/lib/transferForm.js";
+import { decodeFromCanvas, decodeFromFile, readScan } from "./src/lib/scan.js";
+import { prepareUpload } from "./src/lib/imagePrep.js";
+import { downloadTransferForm, printTransferForm, transferFormHtml, transferFormItem } from "./src/lib/transferForm.js";
 import {
   completeMaintenance, createAsset, createCategory, createCompany, createMaintenanceSchedule,
   createProject, createRepair, createRepairPart, deleteAsset, deleteCategory, deleteCompany,
   deleteCompanyLogo, deleteMaintenanceSchedule, deleteProject, deleteRepairPart, getReceiptUrl, loadOperationalData,
-  reinstateAsset, removeReceipt as removeStoredReceipt, retireAsset, saveReceipt, transferAsset,
+  reinstateAsset, removeReceipt as removeStoredReceipt, retireAsset, saveReceipt, transferAsset, transferAssets,
   updateAsset, updateCategory, updateCompany, updateMaintenanceSchedule, updateProject,
   createPerson, deletePerson, setCompanyHeaderBrand, updatePerson,
-  getTransferAttachmentUrl, removeTransferAttachment, saveTransferAttachment,
+  getTransferAttachmentUrl, removeTransferAttachment, renameTransferAttachment, saveTransferAttachment,
+  getAssetAttachmentUrl, getAssetAttachmentUrls, removeAssetAttachment, saveAssetAttachment, updateAssetAttachment,
   createBrand, deleteBrand, updateBrand,
-  deleteAssetPhoto, uploadAssetPhoto,
+  deleteAssetPhoto, uploadAssetPhoto, saveAssetImage, setAssetImagePositions, removeAssetImage,
   updateReceiptMetadata, updateRepair, updateRepairPart, uploadCompanyLogo, upsertProjects,
 } from "./src/data/assetManagementService.js";
 import { discoverLegacyBrowserData, importLegacySnapshot, parseLegacyBackup } from "./src/data/legacyBrowserImport.js";
@@ -51,7 +54,6 @@ const TINT = {
    then a darker rolled bottom edge. */
 const PLATE = "linear-gradient(180deg,var(--ams-yellow-hi) 0%,var(--ams-yellow) 44%,var(--ams-yellow-deep) 100%)";
 const PLATE_HOVER = "linear-gradient(180deg,var(--ams-yellow-lift) 0%,var(--ams-yellow-hi) 44%,var(--ams-yellow) 100%)";
-const HAZARD = "var(--ams-hazard)";
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, "Roboto Mono", monospace';
 const SANS = '"Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 const DISPLAY = '"Space Grotesk", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
@@ -103,16 +105,47 @@ const serializeCsvCell = (value) => {
   return `"${safe.replace(/"/g, '""')}"`;
 };
 
+/* The one way anything leaves this workspace as a file.
+
+   A click starts a download; the browser reads the blob afterwards, on its own
+   schedule. Revoking the URL in the same tick - which this used to do - pulls
+   the file out from under a download that has not read it yet, so the button
+   appears to do nothing at all. Whether the race is won depends on the browser
+   and on how large the file is, which is why it worked sometimes and not
+   others. The anchor also goes into the document before it is clicked: Firefox
+   will not action a click on a detached one. */
 const saveBlob = (blob, name) => {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.href = url; link.download = name; link.click();
-  URL.revokeObjectURL(url);
+  link.href = url;
+  link.download = name;
+  link.rel = "noopener";
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 };
 
 const createCsvContent = (head, rows) => [head, ...rows]
   .map((row) => row.map(serializeCsvCell).join(","))
   .join("\r\n");
+
+/* Excel reads a CSV in the machine's own codepage unless the file opens with a
+   byte-order mark, which is how "Niño" arrives as "NiÃ±o". One character at the
+   front settles it, and every other reader ignores it. */
+const CSV_BOM = "\uFEFF";
+
+/* The same table as a real workbook. Excel opens a .xlsx without asking any
+   questions about delimiters or encodings, which a .csv cannot promise. */
+const buildWorkbook = (head, rows, sheetName) => {
+  const sheet = XLSX.utils.aoa_to_sheet([head, ...rows]);
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, sheet, sheetName.slice(0, 31));
+  return new Blob([XLSX.write(book, { bookType: "xlsx", type: "array" })], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+};
 
 /* Leaflet accepts DOM nodes for DivIcon and tooltip content. All database and
    imported values are assigned through textContent, never interpreted as HTML. */
@@ -354,11 +387,31 @@ const partFields = (p, x) => [
   { key: "date", label: "Date requested", type: "date", value: today() },
 ];
 
+/* A repair rarely needs one part. Somebody at the counter has a list - seals, a
+   bearing, gasket paper - and a new line inherits the supplier, status and date
+   of the line above it, because those three are what a batch genuinely shares.
+   The name and the price are what make each part different, so they start
+   blank. The states themselves are already declared once at the top of this
+   file and shared with the Parts tab, so they are not restated here. */
+const blankPart = (from) => ({
+  uid: `part-${crypto.randomUUID()}`,
+  name: "", amount: "",
+  supplier: from?.supplier || "", date: from?.date || today(),
+});
+
+/* One ticket, then as many parts as the job needs. The ticket stays a single
+   field because a part belongs to exactly one repair, and asking for it once
+   is the whole reason these are being added together. */
+const partListFields = (p, x) => [
+  { key: "ticket", label: "Repair ticket", required: true, type: "select", options: x.openTickets, value: p?.ticket || "" },
+  { key: "parts", label: "Parts", type: "parts", full: true, value: [blankPart()], suppliers: x.providers },
+];
+
 const PART_ACTIONS = {
   addPart: {
-    title: "Add part", submit: "Add part",
-    note: "Parts belong to a repair ticket, so pick the ticket this is for.",
-    fields: partFields,
+    title: "Add parts", submit: "Add parts",
+    note: "Parts belong to a repair ticket, so pick the ticket this is for. Everything the job needs can go on at once — a new line starts with the supplier and date of the one above it.",
+    fields: partListFields,
   },
   needPart: {
     title: "Parts needed", submit: "Add part and await purchase",
@@ -436,6 +489,12 @@ const movements = (a) => {
    asset number when no sticker has been recorded. Scanning it opens the asset
    in the register — for whoever holds access to it. */
 const assetScanKey = (a) => String(a?.code || a?.tag || "").trim();
+
+/* AST-10 is not "before" AST-2, whatever a string comparison thinks. */
+const assetSeq = (a) => {
+  const digits = String(a?.tag || "").replace(/\D/g, "");
+  return digits ? Number.parseInt(digits, 10) : 0;
+};
 const assetDeepLink = (a) => appLink({ asset: assetScanKey(a) });
 const matchesScan = (a, wanted) => {
   const key = String(wanted || "").trim().toLowerCase();
@@ -444,6 +503,51 @@ const matchesScan = (a, wanted) => {
 
 const PHOTO_TYPES = "image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif";
 const PHOTO_LIMIT = 10 * 1024 * 1024;
+
+/* ------------------------- the asset's paperwork -------------------------
+   The three documents nearly every machine arrives with, offered as a list so
+   they are named the same way every time. "Other" is not one of them: it is
+   the prompt for the user's own words, because a register accumulates
+   certificates nobody wrote a dropdown for.
+   ------------------------------------------------------------------------ */
+const DOC_TYPES = ["Sales Invoice (SI)", "Certificate of Registration (CR)", "Deed of Sale (DOD)"];
+const DOC_OTHER = "Other";
+const DOC_ACCEPT = "application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif";
+const DOC_LIMIT = 10 * 1024 * 1024;
+
+/* One stored string becomes a dropdown choice plus, where it is not one of the
+   listed kinds, the words that were typed instead. */
+const docTypeParts = (stored) => (DOC_TYPES.includes(stored)
+  ? { docType: stored, other: "" }
+  : { docType: stored ? DOC_OTHER : "", other: stored || "" });
+/* ...and back again: what actually gets stored against the document. */
+const docTypeValue = (row) => String(row.docType === DOC_OTHER ? row.other || "" : row.docType || "").trim();
+/* What the form starts with: the documents already filed against this asset,
+   in the same shape a freshly picked file takes, so the list that edits them
+   does not have to tell the two apart. */
+const docEntries = (asset) => (asset.files || []).map((file) => ({
+  uid: file.id, id: file.id, bucket: file.bucket, path: file.path,
+  label: file.label, type: file.type, size: file.size, at: file.at,
+  ...docTypeParts(file.docType),
+}));
+/* A spreadsheet can carry a serial number; it cannot carry a scan of a deed of
+   sale. File-shaped fields are part of the form but never part of an import. */
+const importable = (f) => !["image", "images", "file", "files", "parts"].includes(f.type);
+
+/* The photographs already on this asset, in the shape a freshly picked file
+   takes, so one list edits both. The order is the meaning: index 0 is the
+   cover, which is why promoting an image is simply moving it to the front. */
+const imageEntries = (asset) => {
+  const held = (asset.images || []).map((image) => ({
+    uid: image.id, id: image.id, path: image.path, url: image.url,
+  }));
+  if (held.length) return held;
+  /* A register whose images migration has not run yet still has the one
+     picture its asset row points at, and opening the edit form must not be
+     what throws it away. It comes in carrying a path but no id, which is
+     exactly what a picture that still needs a row looks like. */
+  return asset.photoUrl ? [{ uid: "cover", path: asset.photoPath, url: asset.photoUrl }] : [];
+};
 
 /* identifiers that must point at exactly one asset */
 const UNIQUE_FIELDS = [
@@ -489,6 +593,54 @@ const availOf = (a, job) => {
 
 /* ------------------------------ actions ------------------------------ */
 
+/* What paperwork an asset carries, in one cell. A spreadsheet row is one
+   asset, so several documents have to fold into a single value: the kinds it
+   holds, and how many of each where a kind turns up more than once. Kept to
+   plain ASCII because a CSV without a byte-order mark is read as the local
+   codepage by Excel, and "x2" survives that where a multiplication sign does
+   not. */
+const docTypeSummary = (files) => {
+  /* A real Map: the lucide icon of the same name is imported as MapIcon above,
+     precisely so that this line means what it says. */
+  const tally = new Map();
+  (files || []).forEach((file) => tally.set(file.docType, (tally.get(file.docType) || 0) + 1));
+  return [...tally].map(([kind, n]) => (n > 1 ? `${kind} x${n}` : kind)).join("; ");
+};
+
+/* Enough of an asset to know which machine is being ticked: what the register
+   calls it, then whichever numbers are stencilled on it, then where it is
+   standing now. A cart of four excavators is otherwise four identical lines. */
+const cartLine = (asset) => [
+  asset.code && `Code ${asset.code}`,
+  asset.serial && `SN ${asset.serial}`,
+  asset.body && `Body ${asset.body}`,
+  asset.location && `now at ${asset.location}`,
+].filter(Boolean).join(" · ");
+
+/* The destination half of a movement: where it is going, who signs for it and
+   when. One asset or a cartful, the questions are the same — only the values
+   the form opens with differ, so the origin is passed in rather than assumed. */
+const movementFields = (from, x, v = {}) => {
+  const pid = String(v.project || "");
+  const proj = x.projects.find((pr) => pr.pid === pid);
+  return [
+    { key: "project", label: "Project/Location", required: true, type: "select",
+      options: x.projects.map((pr) => pr.pid),
+      value: from.project || "",
+      hint: x.projects.length ? "The address is filled in from the list. Leave it blank if the asset is somewhere that isn't on it." : "No project/locations set up yet — leave this blank, or add them under Settings." },
+    { key: "location", label: "Address", required: true, value: from.location || "", list: x.locations,
+      derivedOn: pid, derived: proj ? proj.location : "",
+      readOnly: !!proj,
+      hint: proj ? `Looked up from ${proj.pid}. Clear the project if the asset is going somewhere that isn't on the list.`
+        : `Not a project site — type the address.` },
+    { key: "custodian", label: "New responsible person", required: true, type: "select",
+      options: peopleWith(x.people, from.custodian), value: from.custodian || "",
+      hint: "Configured under Settings — Responsible persons." },
+    { key: "date", label: "Effective date", type: "date", value: today() },
+    { key: "reason", label: "Reason / reference", placeholder: "Reassignment, memo no.", full: true },
+  ];
+};
+
 const ASSET_ACTIONS = {
   register: {
     title: "Register asset", submit: "Register asset",
@@ -527,10 +679,14 @@ const ASSET_ACTIONS = {
         hint: x.people.length ? "Configured under Settings — Responsible persons." : "No one is configured yet. Add people under Settings first." },
       { key: "acquired", label: "Date acquired", type: "date", value: today() },
       { key: "cost", label: "Acquisition cost", type: "number" },
-      { key: "photo", label: "Asset image", type: "image", full: true, value: "",
-        blank: Package, clearLabel: "Remove image",
+      { key: "photos", label: "Asset images", type: "images", full: true, value: [],
         accept: PHOTO_TYPES,
-        hint: "JPG, PNG, WEBP, GIF or HEIC, up to 10 MB. Shown in the register beside the asset, so it can be identified on sight." },
+        empty: "No image yet. The first one added becomes the default, and you can change which that is.",
+        hint: "JPG, PNG, WEBP, GIF or HEIC, up to 10 MB each. The one marked Default is what the register shows wherever it has room for a single picture — beside the asset in the list, and at the top of this panel." },
+      { key: "files", label: "Documents", type: "files", full: true, value: [],
+        accept: DOC_ACCEPT, onOpen: x.openFile,
+        empty: "Nothing attached yet. The sales invoice, certificate of registration or deed of sale can go on now, or be added later from Edit details.",
+        hint: "PDF, JPG or PNG, up to 10 MB each. Give each one a type so it can be found by what it is rather than by who filed it." },
       { key: "notes", label: "Notes", type: "textarea", full: true },
       ];
     },
@@ -566,10 +722,14 @@ const ASSET_ACTIONS = {
         : [{ key: "custodian", label: "Responsible person", required: true, type: "select",
             options: peopleWith(x.people, a.custodian), value: a.custodian,
             hint: "Configured under Settings — Responsible persons." }]),
-      { key: "photo", label: "Asset image", type: "image", full: true, value: a.photoUrl || "",
-        blank: Package, clearLabel: "Remove image",
+      { key: "photos", label: "Asset images", type: "images", full: true, value: imageEntries(a),
         accept: PHOTO_TYPES,
-        hint: a.photoUrl ? "Pick another to replace it, or remove it." : "JPG, PNG, WEBP, GIF or HEIC, up to 10 MB. This asset has no image yet." },
+        empty: "This asset has no images yet.",
+        hint: "JPG, PNG, WEBP, GIF or HEIC, up to 10 MB each. The one marked Default is what the register shows wherever it has room for a single picture — beside the asset in the list, and at the top of this panel." },
+      { key: "files", label: "Documents", type: "files", full: true, value: docEntries(a),
+        accept: DOC_ACCEPT, onOpen: x.openFile,
+        empty: "No documents are filed against this asset yet.",
+        hint: "PDF, JPG or PNG, up to 10 MB each. Give each one a type so it can be found by what it is rather than by who filed it." },
       { key: "notes", label: "Notes", type: "textarea", value: a.notes, full: true },
       ];
     },
@@ -599,24 +759,47 @@ const ASSET_ACTIONS = {
       }),
     },
     note: "Move the asset to a new location, a new responsible person, or both.",
+    fields: (a, x, v = {}) => movementFields(a, x, v),
+  },
+  /* The same questions as a single transfer, asked once for a cartful. The
+     fields open blank rather than prefilled, because a cart has no one origin
+     to default from — its assets are alike only in where they are going. */
+  transferCart: {
+    title: "Transfer the cart", submit: "Record transfers",
+    aside: {
+      icon: Printer, label: "Print transfer form",
+      run: (v, a, x) => {
+        const picked = new Set(v.picked || []);
+        const held = (a.cart || []).filter((asset) => picked.has(asset.id));
+        const date = v.date || today();
+        printTransferForm({
+          company: x.companies.find((company) => company.name === held[0]?.company) || { name: held[0]?.company || "" },
+          asset: held[0] || {},
+          movement: {
+            date, releasedBy: x.userName, number: "",
+            /* one sheet, one line per asset — which is what the ruled pad was
+               always for, and what makes a cartful callable out on delivery */
+            items: held.map((asset) => transferFormItem(asset, {
+              date,
+              fromLoc: asset.location, toLoc: v.location,
+              fromPer: asset.custodian, toPer: v.custodian,
+              fromProject: asset.project, toProject: v.project,
+            })),
+          },
+        });
+      },
+    },
+    note: "Tick the assets that are going, then say where. Every one ticked moves to the same address and responsible person on the same date, and is recorded as its own movement.",
     fields: (a, x, v = {}) => {
-      const pid = String(v.project || "");
-      const proj = x.projects.find((pr) => pr.pid === pid);
+      const held = a.cart || [];
       return [
-        { key: "project", label: "Project/Location", required: true, type: "select",
-          options: x.projects.map((pr) => pr.pid),
-          value: a.project || "",
-          hint: x.projects.length ? "The address is filled in from the list. Leave it blank if the asset is somewhere that isn't on it." : "No project/locations set up yet — leave this blank, or add them under Settings." },
-        { key: "location", label: "Address", required: true, value: a.location, list: x.locations,
-          derivedOn: pid, derived: proj ? proj.location : "",
-          readOnly: !!proj,
-          hint: proj ? `Looked up from ${proj.pid}. Clear the project if the asset is going somewhere that isn't on the list.`
-            : `Not a project site — type the address.` },
-        { key: "custodian", label: "New responsible person", required: true, type: "select",
-          options: peopleWith(x.people, a.custodian), value: a.custodian,
-          hint: "Configured under Settings — Responsible persons." },
-        { key: "date", label: "Effective date", type: "date", value: today() },
-        { key: "reason", label: "Reason / reference", placeholder: "Reassignment, memo no.", full: true },
+        { key: "picked", label: "Assets to move", type: "checks", full: true, required: true,
+          options: held.map((asset) => ({ id: asset.id, name: `${asset.tag} · ${asset.name}`, hint: cartLine(asset) })),
+          /* everything in the cart is going unless somebody says otherwise —
+             the cart was built by choosing, so choosing again is the exception */
+          value: held.map((asset) => asset.id),
+          empty: "Nothing in the cart can be moved. Assets under repair are left out." },
+        ...movementFields({}, x, v),
       ];
     },
   },
@@ -704,6 +887,9 @@ const REPAIR_ACTIONS = {
       { key: "date", label: "Date", type: "date", value: today() },
     ],
   },
+  /* Nothing opens this: the ticket's own "Add part" button and the Parts tab
+     both dispatch { kind: "part" }, which lands in PART_ACTIONS. Left as it
+     was rather than quietly built on. */
   addPart: {
     title: "Add part", submit: "Add part",
     fields: (a, x) => [
@@ -711,7 +897,7 @@ const REPAIR_ACTIONS = {
       { key: "qty", label: "Quantity", type: "number", value: "1" },
       { key: "unit", label: "Unit cost", type: "number" },
       { key: "supplier", label: "Supplier", list: x.providers },
-      { key: "state", label: "Status", type: "select", options: ["Needed", "Ordered", "Purchased"], value: "Needed" },
+      { key: "state", label: "Status", type: "select", options: PART_STATES, value: "Needed" },
       { key: "date", label: "Date", type: "date", value: today() },
     ],
   },
@@ -785,7 +971,7 @@ const MetricTile = ({ label, value, tone = C.ink, hint }) => (
   </div>
 );
 
-function Btn({ children, onClick, icon: Icon, kind = "ghost", small, disabled }) {
+function Btn({ children, onClick, icon: Icon, kind = "ghost", small, disabled, iconClass }) {
   const s = {
     solid: { background: PLATE, color: C.brandInk, border: `1px solid ${C.brandEdge}`, fontWeight: 800, boxShadow: "0 3px 0 var(--ams-yellow-dim)" },
     ghost: { background: C.surface, color: C.ink, border: `1px solid ${C.rule}` },
@@ -794,12 +980,531 @@ function Btn({ children, onClick, icon: Icon, kind = "ghost", small, disabled })
   return (
     <button onClick={disabled ? undefined : onClick} disabled={disabled} className="inline-flex items-center gap-2 transition-opacity hover:opacity-75 disabled:opacity-40 disabled:hover:opacity-40"
       style={{ ...s, minHeight: small ? 34 : 40, borderRadius: 10, fontFamily: SANS, fontSize: small ? 12.5 : 13, fontWeight: 700, padding: small ? "0 10px" : "0 13px", cursor: disabled ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
-      {Icon && <Icon size={small ? 13 : 14} strokeWidth={2} />}{children}
+      {Icon && <Icon size={small ? 13 : 14} strokeWidth={2} className={iconClass} />}{children}
     </button>
   );
 }
 
 const inputStyle = { width: "100%", minHeight: 42, padding: "9px 11px", border: `1px solid ${C.rule}`, borderRadius: 10, background: C.surface, color: C.ink, fontSize: 14, fontFamily: SANS, outline: "none" };
+
+/* =========================================================================
+   The documents filed against one asset, edited as a list.
+
+   A machine arrives with an invoice, usually a registration, sometimes a deed
+   of sale, and they turn up one at a time rather than all at once - so the
+   control is a growing list with a plus on the end, not a single slot.
+
+   A row is either a file just picked, which carries a File and has not been
+   uploaded yet, or one already filed, which carries an id and can be opened.
+   Both are named and typed the same way, so the list never has to explain the
+   difference; only the line above the inputs differs, because only one of them
+   has anything to open.
+   ========================================================================= */
+/* =========================================================================
+   The photographs of one asset, edited as an ordered list.
+
+   One picture says which excavator this is; it does not show the dent on the
+   offside door, and that is a second photograph taken on the same walkaround.
+   So this is a list, and because the register has places where it can show
+   exactly one picture, the list has a front. The one at the front is the
+   default, and making another the default moves it there - there is no
+   separate flag that could get out of step with the order.
+   ========================================================================= */
+/* =========================================================================
+   The parts a repair needs, entered together.
+
+   Typing them one dialog at a time is five round trips to record what was a
+   single trip to the supplier, so this is a list with a plus on the end and
+   one save at the finish. The running total sits beside the plus, because the
+   question after "what does it need" is always "what will it cost".
+   ========================================================================= */
+/* A compact field that still says what it is. Smaller than the form's own
+   Label, because inside a card it is a caption rather than a heading. */
+const Micro = ({ label, span, children }) => (
+  <div style={span ? { gridColumn: "span 2" } : undefined}>
+    <span className="block uppercase" style={{ fontFamily: SANS, fontSize: 9, fontWeight: 800,
+      letterSpacing: "0.07em", color: C.dim, marginBottom: 3 }}>{label}</span>
+    {children}
+  </div>
+);
+
+function PartLines({ f, value, onChange }) {
+  /* never empty: the form seeds one line and the remove control hides itself
+     at the last one, so there is always somewhere to type */
+  const rows = Array.isArray(value) && value.length ? value : [];
+  const box = { ...inputStyle, minHeight: 36, fontSize: 13, borderRadius: 8 };
+  const set = (uid, patch) => onChange(rows.map((row) => (row.uid === uid ? { ...row, ...patch } : row)));
+  const total = rows.reduce((sum, row) => sum + num(row.amount), 0);
+
+  return (
+    <div className="grid gap-2">
+      {rows.map((row, index) => (
+        <div key={row.uid} style={{ border: `1px solid ${C.rule}`, borderRadius: 10, padding: "9px 10px", background: C.surface }}>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="uppercase" style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.08em", color: C.dim }}>Part {index + 1}</span>
+            <span className="flex-1" />
+            {rows.length > 1 && (
+              <button type="button" onClick={() => onChange(rows.filter((one) => one.uid !== row.uid))}
+                title={`Remove part ${index + 1}`} aria-label={`Remove part ${index + 1}`}
+                className="p-1 hover:opacity-60" style={{ color: STAGES.broken.color }}><X size={14} /></button>
+            )}
+          </div>
+          <input style={box} value={row.name} placeholder="Battery, 54Wh" aria-label={`Part ${index + 1}`}
+            onChange={(e) => set(row.uid, { name: e.target.value })} />
+          {/* A filled-in figure beside a filled-in date says nothing about
+              which is which, and a placeholder is gone the moment it is
+              needed - so these carry their own small label. */}
+          <div className="grid grid-cols-2 gap-2 mt-2">
+            <Micro label="Estimated total amount">
+              <input style={box} type="number" value={row.amount} aria-label={`Part ${index + 1} estimated amount`}
+                onChange={(e) => set(row.uid, { amount: e.target.value })} />
+            </Micro>
+            <Micro label="Date requested">
+              <input style={box} type="date" value={row.date} aria-label={`Part ${index + 1} date requested`}
+                onChange={(e) => set(row.uid, { date: e.target.value })} />
+            </Micro>
+          </div>
+          <div className="mt-2">
+            <Micro label="Preferred supplier">
+              <input style={box} value={row.supplier} list="dl-part-supplier" aria-label={`Part ${index + 1} preferred supplier`}
+                onChange={(e) => set(row.uid, { supplier: e.target.value })} />
+            </Micro>
+          </div>
+        </div>
+      ))}
+      <datalist id="dl-part-supplier">{(f.suppliers || []).map((one) => <option key={one} value={one} />)}</datalist>
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" onClick={() => onChange([...rows, blankPart(rows[rows.length - 1])])}
+          className="inline-flex items-center gap-1.5 hover:opacity-70"
+          style={{ fontSize: 12.5, fontWeight: 700, color: C.ink, border: `1px dashed ${C.rule}`,
+            borderRadius: 8, padding: "7px 11px", background: C.soft }}>
+          <Plus size={13} strokeWidth={2.4} />Add another part
+        </button>
+        {total > 0 && (
+          <span style={{ fontFamily: MONO, fontSize: 12, color: C.mute }}>
+            {rows.length} {rows.length === 1 ? "part" : "parts"} · {money(total)}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AssetImageRows({ f, value, onChange }) {
+  const rows = Array.isArray(value) ? value : [];
+  const picker = useRef(null);
+  const add = (chosen) => {
+    const picked = Array.from(chosen || []);
+    if (!picked.length) return;
+    onChange([...rows, ...picked.map((file) => ({
+      uid: `new-${crypto.randomUUID()}`, file,
+      /* minted once and carried on the entry, rather than on every render */
+      url: URL.createObjectURL(file),
+    }))]);
+  };
+  const promote = (uid) => onChange([
+    ...rows.filter((one) => one.uid === uid),
+    ...rows.filter((one) => one.uid !== uid),
+  ]);
+
+  return (
+    <div className="grid gap-2">
+      {rows.length === 0 && <div style={{ fontSize: 12.5, color: C.mute }}>{f.empty}</div>}
+      {rows.length > 0 && (
+        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+          {rows.map((row, index) => (
+            <div key={row.uid} style={{ overflow: "hidden", borderRadius: 8, background: C.surface,
+              border: `1px solid ${index === 0 ? C.brandEdge : C.rule}` }}>
+              <span className="relative block" style={{ height: 84, background: C.soft }}>
+                <img src={row.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                <button type="button" onClick={() => onChange(rows.filter((one) => one.uid !== row.uid))}
+                  title="Remove this image" aria-label="Remove this image"
+                  className="absolute flex items-center justify-center hover:opacity-100"
+                  style={{ top: 4, right: 4, width: 20, height: 20, borderRadius: 999, opacity: 0.94,
+                    border: `1px solid ${C.rule}`, background: C.surface, color: STAGES.broken.color }}>
+                  <X size={11} strokeWidth={2.6} />
+                </button>
+              </span>
+              {index === 0 ? (
+                <span className="block text-center uppercase" title="Shown wherever the register has room for one picture"
+                  style={{ fontFamily: SANS, fontSize: 9, fontWeight: 800, letterSpacing: "0.07em",
+                    color: C.brandInk, background: C.brand, padding: "4px 0" }}>Default</span>
+              ) : (
+                <button type="button" onClick={() => promote(row.uid)}
+                  title="Show this one wherever the register has room for a single picture"
+                  className="block w-full text-center hover:opacity-70"
+                  style={{ fontFamily: SANS, fontSize: 10, fontWeight: 700, color: C.mute,
+                    background: C.soft, padding: "4px 0", borderTop: `1px solid ${C.ruleSoft}` }}>
+                  Make default
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <div>
+        <input ref={picker} type="file" multiple accept={f.accept || PHOTO_TYPES} className="hidden"
+          onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
+        <button type="button" onClick={() => picker.current?.click()}
+          className="inline-flex items-center gap-1.5 hover:opacity-70"
+          style={{ fontSize: 12.5, fontWeight: 700, color: C.ink, border: `1px dashed ${C.rule}`,
+            borderRadius: 8, padding: "7px 11px", background: C.soft }}>
+          <Plus size={13} strokeWidth={2.4} />{rows.length ? "Add another image" : "Add an image"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AttachmentRows({ f, value, onChange }) {
+  const rows = Array.isArray(value) ? value : [];
+  const picker = useRef(null);
+  const box = { ...inputStyle, minHeight: 36, fontSize: 13, borderRadius: 8 };
+  const set = (uid, patch) => onChange(rows.map((row) => (row.uid === uid ? { ...row, ...patch } : row)));
+  const add = (chosen) => {
+    const picked = Array.from(chosen || []);
+    if (!picked.length) return;
+    onChange([...rows, ...picked.map((file) => ({
+      uid: `new-${crypto.randomUUID()}`, file,
+      /* the scanner's name is a starting point, not the answer - which is why
+         it lands in an editable box rather than being filed as it came */
+      label: file.name, docType: "", other: "",
+    }))]);
+  };
+
+  return (
+    <div className="grid gap-2">
+      {rows.length === 0 && <div style={{ fontSize: 12.5, color: C.mute }}>{f.empty}</div>}
+      {rows.map((row) => {
+        const named = row.docType === DOC_OTHER;
+        return (
+          <div key={row.uid} style={{ border: `1px solid ${C.rule}`, borderRadius: 10, padding: "9px 10px", background: C.surface }}>
+            <div className="flex items-center gap-2">
+              <Paperclip size={13} style={{ color: C.mute, flexShrink: 0 }} />
+              <span className="truncate flex-1" style={{ fontFamily: MONO, fontSize: 11.5, color: C.mute }}>
+                {row.file ? `${row.file.name} · ${kb(row.file.size)}` : `${kb(row.size)} · filed ${row.at}`}
+              </span>
+              {row.id && f.onOpen && (
+                <button type="button" onClick={() => f.onOpen(row)}
+                  title={`Open ${row.label}`} aria-label={`Open ${row.label}`}
+                  className="flex items-center gap-1 hover:opacity-60" style={{ fontSize: 12, color: C.ink }}>
+                  <Eye size={12} />View
+                </button>
+              )}
+              <button type="button" onClick={() => onChange(rows.filter((one) => one.uid !== row.uid))}
+                title={`Remove ${row.label || "this document"}`} aria-label={`Remove ${row.label || "this document"}`}
+                className="p-1 hover:opacity-60" style={{ color: STAGES.broken.color }}>
+                <X size={14} />
+              </button>
+            </div>
+            <div className="grid sm:grid-cols-2 gap-2 mt-2">
+              <input style={box} value={row.label || ""} aria-label="Document name"
+                placeholder="What to call this document"
+                onChange={(e) => set(row.uid, { label: e.target.value })} />
+              <select style={box} value={row.docType || ""} aria-label="Type of document"
+                onChange={(e) => set(row.uid, { docType: e.target.value })}>
+                <option value="">Type of document —</option>
+                {DOC_TYPES.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
+                <option value={DOC_OTHER}>{DOC_OTHER}…</option>
+              </select>
+            </div>
+            {named && (
+              <input style={{ ...box, marginTop: 8 }} value={row.other || ""} aria-label="Name this kind of document"
+                placeholder="Name this kind of document — Official Receipt, Insurance policy…"
+                onChange={(e) => set(row.uid, { other: e.target.value })} />
+            )}
+          </div>
+        );
+      })}
+      <div>
+        <input ref={picker} type="file" multiple accept={f.accept || DOC_ACCEPT} className="hidden"
+          onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
+        <button type="button" onClick={() => picker.current?.click()}
+          className="inline-flex items-center gap-1.5 hover:opacity-70"
+          style={{ fontSize: 12.5, fontWeight: 700, color: C.ink, border: `1px dashed ${C.rule}`, borderRadius: 8, padding: "7px 11px", background: C.soft }}>
+          <Plus size={13} strokeWidth={2.4} />{rows.length ? "Add another document" : "Add a document"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================================
+   The paperwork filed against an asset, shown on the asset.
+
+   A register accumulates documents faster than a panel has room for them, so
+   this is one row that scrolls sideways rather than a grid that grows: an
+   asset with twelve documents pushes the details no further down the panel
+   than an asset with three.
+
+   A document is recognised by what kind it is before it is recognised by what
+   it is called - "the CR", not "the file named scan0043" - so the kind leads
+   and the name follows it. A scan gets a thumbnail, because a photographed
+   invoice is identified on sight the same way the machine is; the bucket is
+   private, so those are signed for in one round trip when the panel opens. A
+   PDF gets a glyph, its first page not being something a browser renders
+   cheaply into a 100px box.
+   ========================================================================= */
+/* =========================================================================
+   The machine, at the size the panel has always shown it.
+
+   An asset with six photographs takes exactly as much room here as one with a
+   single photograph: the block keeps its height and gains a pair of arrows, a
+   count, and a mark on the one that represents the asset everywhere else. A
+   walkaround therefore costs the panel nothing.
+   ========================================================================= */
+function AssetImages({ images, alt, onOpen }) {
+  const [at, setAt] = useState(0);
+  const many = images.length > 1;
+  /* an image removed under a panel left open must not leave this past the end */
+  const index = Math.min(at, images.length - 1);
+  const step = (by) => setAt((now) => (Math.min(now, images.length - 1) + by + images.length) % images.length);
+
+  const arrow = (by, Icon, label) => (
+    <button type="button" onClick={() => step(by)} title={label} aria-label={label}
+      className="absolute top-1/2 flex items-center justify-center hover:opacity-100"
+      style={{ [by < 0 ? "left" : "right"]: 8, transform: "translateY(-50%)", width: 30, height: 30,
+        borderRadius: 999, border: `1px solid ${C.rule}`, background: C.surface, color: C.ink, opacity: 0.9 }}>
+      <Icon size={16} strokeWidth={2.2} />
+    </button>
+  );
+
+  return (
+    <div className="px-5 pb-4">
+      <Label>Asset image{many ? `s · ${images.length}` : ""}</Label>
+      <div className="relative">
+        {/* the panel shows it at a size that says which machine this is; the
+            gallery shows it at a size that says what state the machine is in */}
+        <button type="button" onClick={() => onOpen(index)} className="block w-full"
+          title="Open this image" aria-label="Open this image" style={{ cursor: "zoom-in" }}>
+          <img src={images[index].url} alt={alt}
+            style={{ display: "block", width: "100%", height: 240, objectFit: "contain",
+              background: C.soft, border: `1px solid ${C.ruleSoft}`, borderRadius: 2 }} />
+        </button>
+        <span aria-hidden="true" className="absolute flex items-center gap-1"
+          style={{ top: 8, right: 8, pointerEvents: "none", fontFamily: SANS, fontSize: 10, fontWeight: 700, color: C.ink,
+            background: C.surface, border: `1px solid ${C.rule}`, borderRadius: 20, padding: "3px 8px", opacity: 0.92 }}>
+          <Eye size={11} />View
+        </span>
+        {many && (
+          <>
+            {arrow(-1, ChevronLeft, "Previous image")}
+            {arrow(1, ChevronRight, "Next image")}
+            {/* which one this is, and whether it is the one the rest of the
+                register uses to stand for the asset */}
+            {index === 0 && (
+              <span className="absolute uppercase" style={{ top: 8, left: 8, pointerEvents: "none", fontFamily: SANS, fontSize: 9,
+                fontWeight: 800, letterSpacing: "0.07em", color: C.brandInk, background: C.brand,
+                borderRadius: 20, padding: "3px 8px" }}>Default</span>
+            )}
+            <span className="absolute" style={{ bottom: 8, right: 8, pointerEvents: "none", fontFamily: MONO, fontSize: 10.5,
+              color: C.ink, background: C.surface, border: `1px solid ${C.rule}`, borderRadius: 20,
+              padding: "2px 8px", opacity: 0.92 }}>{index + 1} / {images.length}</span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AssetDocuments({ files, onOpen }) {
+  const [shots, setShots] = useState({});
+  const strip = useRef(null);
+  /* the ids are what actually changes here - the array itself is rebuilt on
+     every render of the panel, and depending on it would re-sign endlessly */
+  const key = files.map((one) => one.id).join(",");
+  useEffect(() => {
+    let live = true;
+    const pictures = files.filter((one) => String(one.type || "").startsWith("image/"));
+    /* nothing to sign: whatever is held from the asset looked at before is
+       keyed by ids this panel no longer renders, so it cannot show through */
+    if (!pictures.length) return undefined;
+    getAssetAttachmentUrls(pictures)
+      .then((found) => { if (live) setShots(found); })
+      .catch(() => { /* a thumbnail that will not sign is a gap, not a failure */ });
+    return () => { live = false; };
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [key]);
+
+  /* roughly two cards at a time, which keeps a place in the row rather than
+     jumping to an edge the way a full-width page would */
+  const slide = (by) => strip.current?.scrollBy({ left: by * 360, behavior: "smooth" });
+  /* four cards no longer fit the widest the panel gets, so that is where the
+     arrows start earning their place */
+  const scrolls = files.length > 3;
+
+  return (
+    <div className="px-5 pb-4">
+      <div className="flex items-end justify-between">
+        <Label>Documents · {files.length}</Label>
+        {scrolls && (
+          <div className="flex gap-1" style={{ marginBottom: 6 }}>
+            {[[-1, ChevronLeft, "Scroll documents left"], [1, ChevronRight, "Scroll documents right"]].map(([by, Icon, label]) => (
+              <button key={label} type="button" onClick={() => slide(by)} title={label} aria-label={label}
+                className="flex items-center justify-center hover:opacity-70"
+                style={{ width: 24, height: 24, border: `1px solid ${C.rule}`, borderRadius: 6, background: C.surface, color: C.mute }}>
+                <Icon size={13} strokeWidth={2.2} />
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <div ref={strip} className="ams-strip flex gap-3 overflow-x-auto" style={{ paddingBottom: 6, scrollSnapType: "x proximity" }}>
+        {files.map((file, index) => (
+          <button key={file.id} type="button" onClick={() => onOpen(index)}
+            title={`Open ${file.label} — ${file.docType}`}
+            aria-label={`Open ${file.label} — ${file.docType}`}
+            className="text-left overflow-hidden hover:opacity-80"
+            style={{ width: 168, flexShrink: 0, scrollSnapAlign: "start",
+              border: `1px solid ${C.ruleSoft}`, borderRadius: 2, background: C.surface }}>
+            <span style={{ display: "grid", placeItems: "center", height: 104, overflow: "hidden",
+              background: C.soft, borderBottom: `1px solid ${C.ruleSoft}` }}>
+              {shots[file.id]
+                ? <img src={shots[file.id]} alt={file.label} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                : <FileText size={22} style={{ color: C.dim }} />}
+            </span>
+            <span className="block px-2.5 py-2">
+              {/* what kind of paper this is, which is the thing being looked for */}
+              <span className="inline-block uppercase" style={{ fontFamily: SANS, fontSize: 9.5, fontWeight: 800,
+                letterSpacing: "0.06em", lineHeight: 1.35, color: C.brandDeep, background: TINT.brand,
+                borderRadius: 20, padding: "3px 7px" }}>{file.docType}</span>
+              <span className="block truncate" style={{ fontSize: 13, marginTop: 5 }}>{file.label}</span>
+              <span className="block" style={{ fontFamily: MONO, fontSize: 10.5, color: C.dim, marginTop: 2 }}>
+                {kb(file.size)} · {fmt(file.at)}
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================================
+   Looking through a stack of things, one at a time.
+
+   Two stacks use this: an asset's paperwork and an asset's photographs. They
+   differ only in where the file comes from - a document lives in a private
+   bucket and has to be signed for, a photograph is public and already carries
+   its url - so `resolve` is optional and everything else is shared. Keeping
+   one component means the fixed frame below is written once, which is the part
+   that has to stay right: paging must never resize the dialog.
+   ========================================================================= */
+function MediaGallery({ items, at, onClose, resolve }) {
+  const [index, setIndex] = useState(at);
+  /* one piece of state, so nothing has to be reset synchronously as the
+     selection moves - `done` is what separates "still signing" from "would
+     not sign", which otherwise both look like an absent URL */
+  const [signed, setSigned] = useState({ done: false, urls: {} });
+  const panel = useRef(null);
+  const titleId = useId();
+  const item = items[index];
+
+  useEscapeKey(true, onClose);
+  useDialogFocus(panel);
+
+  const key = items.map((one) => one.id).join(",");
+  useEffect(() => {
+    /* nothing to sign: these carry their own url and are ready on arrival */
+    if (!resolve) return undefined;
+    let live = true;
+    resolve(items)
+      .then((urls) => { if (live) setSigned({ done: true, urls }); })
+      .catch(() => { if (live) setSigned({ done: true, urls: {} }); });
+    return () => { live = false; };
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [key, resolve]);
+
+  const step = useCallback((by) => setIndex((now) => (now + by + items.length) % items.length), [items.length]);
+  useEffect(() => {
+    if (items.length < 2) return undefined;
+    const onKey = (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      step(event.key === "ArrowLeft" ? -1 : 1);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [step, items.length]);
+
+  const ready = resolve ? signed.done : true;
+  const src = resolve ? signed.urls[item.id] : item.url;
+  const download = () => {
+    if (!src) return;
+    const a = document.createElement("a");
+    a.href = src; a.download = item.download || item.title || "file"; a.click();
+  };
+
+  const arrow = (by, Icon, label) => (
+    <button type="button" onClick={() => step(by)} title={label} aria-label={label}
+      className="absolute top-1/2 flex items-center justify-center hover:opacity-100"
+      style={{ [by < 0 ? "left" : "right"]: 10, transform: "translateY(-50%)", width: 38, height: 38,
+        borderRadius: 999, border: `1px solid ${C.rule}`, background: C.surface, color: C.ink, opacity: 0.9 }}>
+      <Icon size={19} strokeWidth={2.2} />
+    </button>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(25,28,39,0.6)" }}>
+      <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
+        className="flex flex-col"
+        /* A fixed frame, not one that wraps its contents: paging through a
+           portrait scan, a landscape one and a PDF would otherwise jump the
+           dialog to a different size on every press of the arrow, and the
+           arrows themselves would move out from under the pointer. The
+           document is scaled to fit the stage instead. */
+        style={{ maxWidth: 860, width: "100%", height: "min(88vh, 820px)", background: C.surface, borderRadius: 2, outline: "none" }}>
+        <div className="flex items-start justify-between gap-3 px-4 py-3" style={{ flexShrink: 0, borderBottom: `1px solid ${C.ruleSoft}` }}>
+          <div className="min-w-0">
+            {item.kind && (
+              <span className="inline-block uppercase" style={{ fontFamily: SANS, fontSize: 9.5, fontWeight: 800,
+                letterSpacing: "0.06em", color: C.brandDeep, background: TINT.brand, borderRadius: 20, padding: "3px 7px" }}>{item.kind}</span>
+            )}
+            <div id={titleId} className="truncate" style={{ fontSize: 14, fontWeight: 600, marginTop: item.kind ? 4 : 0 }}>{item.title}</div>
+            <div style={{ fontFamily: MONO, fontSize: 11, color: C.mute }}>{item.meta}</div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ color: C.mute }} className="p-1 hover:opacity-60"><X size={18} /></button>
+        </div>
+        {/* minHeight 0 so this takes the height left over rather than the
+            height its contents want - a flex child defaults to refusing to
+            shrink below its content, which is the other half of the jump */}
+        <div className="relative flex-1 p-4" style={{ background: C.paper, minHeight: 0 }}>
+          <div className="w-full h-full flex items-center justify-center overflow-auto">
+            {!ready
+              ? <div style={{ fontFamily: MONO, fontSize: 11, letterSpacing: "0.15em", color: C.mute }}>LOADING…</div>
+              : !src
+                ? <div className="text-center" style={{ fontSize: 13, color: C.overdue }}>This file could not be opened from Supabase Storage.</div>
+                : item.type?.startsWith("image/")
+                  ? <img src={src} alt={item.title} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block" }} />
+                  : <iframe title={item.title} src={src} style={{ width: "100%", height: "100%", alignSelf: "stretch", border: "none", background: C.soft }} />}
+          </div>
+          {items.length > 1 && arrow(-1, ChevronLeft, "Previous")}
+          {items.length > 1 && arrow(1, ChevronRight, "Next")}
+        </div>
+        <div className="flex items-center justify-between gap-2 px-4 py-3" style={{ flexShrink: 0, borderTop: `1px solid ${C.ruleSoft}` }}>
+          <span style={{ fontFamily: MONO, fontSize: 11.5, color: C.mute }}>
+            {index + 1} / {items.length}{items.length > 1 ? "  ·  ← →" : ""}
+          </span>
+          <Btn icon={Download} onClick={download} disabled={!src}>Download</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* What each stack looks like once it is in the gallery's own terms. */
+const documentItems = (files) => files.map((file) => ({
+  id: file.id, kind: file.docType, title: file.label, type: file.type,
+  meta: `${kb(file.size)} · filed ${fmt(file.at)}`,
+  bucket: file.bucket, path: file.path, download: file.label,
+}));
+const imageItems = (images, asset) => images.map((image, index) => ({
+  id: image.id, kind: index === 0 ? "Default" : "", type: "image/*", url: image.url,
+  title: `${asset.tag} · ${asset.name}`,
+  meta: `Image ${index + 1} of ${images.length}${image.at ? ` · added ${fmt(image.at)}` : ""}`,
+  download: `${asset.tag}-image-${index + 1}`,
+}));
+
 
 function Field({ f, value, onChange, bad }) {
   const base = { ...inputStyle, fontFamily: f.mono ? MONO : SANS, border: `1px solid ${bad ? STAGES.broken.color : C.rule}`, background: bad ? STAGES.broken.tint : C.surface };
@@ -813,19 +1518,39 @@ function Field({ f, value, onChange, bad }) {
           <option value="">—</option>{f.options.map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
       ) : f.type === "checks" ? (
-        <div className="grid sm:grid-cols-2 gap-1.5">
+        /* An option may carry a second line naming the thing more exactly —
+           a code, a serial, where it is standing right now — and a list that
+           does gets a column to itself so the two lines stay readable. */
+        <div className={f.options.some((option) => option.hint) ? "grid gap-1.5" : "grid sm:grid-cols-2 gap-1.5"}>
           {f.options.length === 0
             ? <div style={{ fontSize: 12.5, color: C.mute }}>{f.empty}</div>
-            : f.options.map((option) => {
-              const chosen = (value || []).includes(option.id);
-              return (
-                <label key={option.id} className="flex items-center gap-2" style={{ fontSize: 13 }}>
-                  <input type="checkbox" checked={chosen}
-                    onChange={() => onChange(chosen ? (value || []).filter((id) => id !== option.id) : [...(value || []), option.id])} />
-                  {option.name}
-                </label>
-              );
-            })}
+            : (
+              <>
+                {f.options.length > 1 && (
+                  <div className="flex items-center gap-3" style={{ fontSize: 12, color: C.mute, marginBottom: 2 }}>
+                    <span style={{ fontFamily: MONO }}>{(value || []).length}/{f.options.length} selected</span>
+                    <button type="button" className="underline" onClick={() => onChange(f.options.map((option) => option.id))}>All</button>
+                    <button type="button" className="underline" onClick={() => onChange([])}>None</button>
+                  </div>
+                )}
+                {f.options.map((option) => {
+                  const chosen = (value || []).includes(option.id);
+                  return (
+                    <label key={option.id} className="flex items-start gap-2"
+                      style={{ fontSize: 13, padding: option.hint ? "6px 8px" : 0, borderRadius: 8,
+                        background: option.hint ? (chosen ? C.soft : "transparent") : "transparent",
+                        border: option.hint ? `1px solid ${chosen ? C.rule : "transparent"}` : "none" }}>
+                      <input type="checkbox" checked={chosen} style={{ marginTop: option.hint ? 3 : 0 }}
+                        onChange={() => onChange(chosen ? (value || []).filter((id) => id !== option.id) : [...(value || []), option.id])} />
+                      <span className="min-w-0">
+                        {option.name}
+                        {option.hint && <span className="block truncate" style={{ fontFamily: MONO, fontSize: 11, color: C.mute }}>{option.hint}</span>}
+                      </span>
+                    </label>
+                  );
+                })}
+              </>
+            )}
         </div>
       ) : f.type === "color" ? (
         <div className="flex items-center gap-3">
@@ -863,6 +1588,12 @@ function Field({ f, value, onChange, bad }) {
             </div>
           </div>
         </div>
+      ) : f.type === "parts" ? (
+        <PartLines f={f} value={value} onChange={onChange} />
+      ) : f.type === "images" ? (
+        <AssetImageRows f={f} value={value} onChange={onChange} />
+      ) : f.type === "files" ? (
+        <AttachmentRows f={f} value={value} onChange={onChange} />
       ) : f.type === "file" ? (
         <div>
           <input type="file" accept={f.accept || "image/*,application/pdf"}
@@ -931,14 +1662,14 @@ function AssetImportDialog({ def, ctx, existing, onCancel, onImport, busy }) {
   useEscapeKey(!busy, () => onCancel());
   useDialogFocus(panel);
 
-  const columns = def.fields({}, ctx, {});
+  const columns = def.fields({}, ctx, {}).filter(importable);
 
   const chooseFile = async (file) => {
     if (!file) return;
     setProblem(""); setPlan(null); setReading(true);
     try {
       const sheet = readAssetSheet(await file.arrayBuffer());
-      setPlan({ ...planAssetImport({ ...sheet, fieldsFor: def.fields, ctx, validate: def.validate, existing }), file: file.name });
+      setPlan({ ...planAssetImport({ ...sheet, fieldsFor: (a, x, v) => def.fields(a, x, v).filter(importable), ctx, validate: def.validate, existing }), file: file.name });
     } catch (error) {
       setProblem(error instanceof AssetImportError ? error.message : `That file could not be read. ${error.message}`);
     } finally {
@@ -1068,6 +1799,91 @@ function AssetImportDialog({ def, ctx, existing, onCancel, onImport, busy }) {
   );
 }
 
+/* A row of a list field, reduced to what an edit could have changed. Every own
+   key is read rather than a fixed handful, so documents, images and parts are
+   all covered and a list added later cannot quietly compare equal. A File is
+   not serialisable and its presence is itself the change. Options in a
+   tick-list are plain ids and compare as themselves. */
+const rowKey = (row) => (row && typeof row === "object"
+  ? Object.keys(row).sort().map((k) => `${k}=${row[k] instanceof File ? "file" : String(row[k] ?? "")}`).join("|")
+  : String(row));
+const sameRows = (now, before) => Array.isArray(before)
+  && now.length === before.length
+  && now.every((row, index) => rowKey(row) === rowKey(before[index]));
+
+/* Photographs go up before the asset row is written, which is what the single
+   photo always did and still the right order: the row carries the cover path,
+   and a storage failure should stop before anything is saved. What comes back
+   is the list as the form left it, every entry now holding a path. */
+async function uploadImages(entries) {
+  const settled = [];
+  for (const row of (Array.isArray(entries) ? entries : [])) {
+    if (!row.file) { settled.push(row); continue; }
+    /* a walkaround on a phone is several megabytes a shot, and the register
+       wants a recognisable machine rather than a printable one */
+    const { file } = await prepareUpload(row.file);
+    if (file.size > PHOTO_LIMIT) throw new Error(`${row.file.name} is ${kb(file.size)}. The limit is 10 MB per image.`);
+    settled.push({ ...row, path: await uploadAssetPhoto(file) });
+  }
+  return settled;
+}
+
+/* Once the asset row is safely written: pictures taken out of the list are
+   detached, new ones are recorded against the asset, and every one of them is
+   stamped with where it ended up - the stamp being what makes the front of the
+   list mean "default" the next time the register loads. */
+async function settleImages(assetId, ordered, before = []) {
+  const kept = new Set(ordered.filter((row) => row.id).map((row) => row.id));
+  const trouble = [];
+  for (const gone of before.filter((row) => !kept.has(row.id))) {
+    try { await removeAssetImage(gone); } catch { trouble.push("an image that was taken off"); }
+  }
+  const ids = [];
+  for (const [index, row] of ordered.entries()) {
+    try {
+      if (row.id) ids.push(row.id);
+      else if (row.path) ids.push((await saveAssetImage(assetId, row.path, index)).id);
+    } catch { trouble.push(row.file?.name || "an image"); }
+  }
+  try { await setAssetImagePositions(ids); } catch { trouble.push("the image order"); }
+  return trouble;
+}
+
+/* The documents ride along with the form rather than living on a screen of
+   their own, so they are settled once the asset row is safely written: rows
+   taken out of the list are detached, rows already filed pick up corrected
+   names and types, and newly picked files go up. Each is attempted on its own,
+   because one scan that will not upload should not cost the other three, and
+   whatever failed is named back to the caller rather than swallowed. */
+async function settleFiles(assetId, entries, before = []) {
+  const rows = Array.isArray(entries) ? entries : [];
+  const kept = new Set(rows.filter((row) => row.id).map((row) => row.id));
+  const trouble = [];
+  for (const gone of before.filter((row) => !kept.has(row.id))) {
+    try { await removeAssetAttachment(gone); }
+    catch { trouble.push(gone.label || "a document"); }
+  }
+  for (const row of rows) {
+    const kind = docTypeValue(row);
+    const named = String(row.label || "").trim();
+    try {
+      if (row.file) {
+        /* a phone photograph of an invoice is megabytes of detail nobody
+           reads; a PDF is already the document and passes through untouched */
+        const { file } = await prepareUpload(row.file);
+        if (file.size > DOC_LIMIT) throw new Error("over the limit");
+        await saveAssetAttachment(assetId, file, { label: named || row.file.name, docType: kind });
+      } else if (row.id) {
+        const was = before.find((one) => one.id === row.id);
+        if (was && (was.label !== named || was.docType !== kind)) {
+          await updateAssetAttachment(row.id, { label: named || was.label, docType: kind });
+        }
+      }
+    } catch { trouble.push(named || row.file?.name || "a document"); }
+  }
+  return trouble;
+}
+
 function Dialog({ def, subject, header, ctx, onCancel, onSubmit, busy = false }) {
   /* Initial pass seeds the values; every render after that rebuilds the field list
      from what's been typed, so a field can appear once its trigger is chosen. */
@@ -1100,10 +1916,13 @@ function Dialog({ def, subject, header, ctx, onCancel, onSubmit, busy = false })
     setErr("");
   };
   /* A picked file is always a change; everything else compares as text, which
-     is what the fields hold. */
+     is what the fields hold. A list field holds objects, and stringifying an
+     array of those compares every row equal - so its rows are compared by the
+     parts of them that can actually be edited. */
   const dirty = Object.keys(vals).some((key) => {
     const now = vals[key];
     if (now instanceof File) return true;
+    if (Array.isArray(now)) return !sameRows(now, opened[key]);
     return String(now ?? "") !== String(opened[key] ?? "");
   });
 
@@ -1124,6 +1943,21 @@ function Dialog({ def, subject, header, ctx, onCancel, onSubmit, busy = false })
     if (dupe) return setErr("");
     const miss = fields.filter((f) => f.required && !String(vals[f.key] || "").trim());
     if (miss.length) return setErr(`Fill in ${miss.map((m) => m.label.toLowerCase()).join(", ")}.`);
+    /* A document nobody typed a kind for is filed as nothing in particular,
+       which is the one thing the type is there to prevent. */
+    const attached = fields.flatMap((f) => (f.type === "files" ? (vals[f.key] || []) : []));
+    const untyped = attached.find((row) => !docTypeValue(row));
+    if (untyped) return setErr(`Choose a type for ${untyped.label || untyped.file?.name || "each document"}.`);
+    /* A line nobody typed a name into is not a part, and saving it would put a
+       blank row on the ticket that somebody has to go and delete. */
+    const parts = fields.flatMap((f) => (f.type === "parts" ? (vals[f.key] || []) : []));
+    if (parts.length && !parts.some((row) => String(row.name || "").trim())) return setErr("Name at least one part.");
+    const unnamed = parts.findIndex((row) => !String(row.name || "").trim());
+    if (unnamed !== -1 && parts.length > 1) return setErr(`Part ${unnamed + 1} has no name. Give it one, or remove the line.`);
+    /* An oversized photograph is shrunk on the way up; an oversized PDF is the
+       document itself, so it has to be said now rather than after the save. */
+    const heavy = attached.find((row) => row.file && row.file.size > DOC_LIMIT && !String(row.file.type || "").startsWith("image/"));
+    if (heavy) return setErr(`${heavy.file.name} is ${kb(heavy.file.size)}. The limit is 10 MB per document.`);
     onSubmit(Object.fromEntries(fields.map((f) => [f.key, vals[f.key] ?? ""])));
   };
   /* No dismiss on the backdrop: a dialog is left through the X or Cancel, so a
@@ -1141,7 +1975,8 @@ function Dialog({ def, subject, header, ctx, onCancel, onSubmit, busy = false })
           </div>
           <button type="button" onClick={requestClose} disabled={busy} aria-label="Close" style={{ color: C.mute }} className="p-1 hover:opacity-60 disabled:opacity-40"><X size={18} /></button>
         </div>
-        {def.note && <div className="px-5 pt-4" style={{ fontSize: 13, color: C.mute, lineHeight: 1.5 }}>{def.note}</div>}
+        {/* a note that has to count what the dialog is about is a function */}
+        {def.note && <div className="px-5 pt-4" style={{ fontSize: 13, color: C.mute, lineHeight: 1.5 }}>{typeof def.note === "function" ? def.note(subject || {}, ctx) : def.note}</div>}
         <div className="grid grid-cols-2 gap-x-4 gap-y-3 p-5">
           {fields.map((f) => <Field key={f.key} f={f} bad={clashKeys.includes(f.key)} value={vals[f.key] ?? ""} onChange={(v) => changeField(f.key, v)} />)}
         </div>
@@ -1253,19 +2088,12 @@ const CHROME_CSS = `
   --ams-dim:#8c97a5;
   color:var(--ams-text);
 }
-/* The caution tape runs the whole frame of the rail - across the top, down
-   the right edge and along the bottom - rather than sitting as a strip on
-   top of it. One gradient painted into the border box does all three: the
-   rail colour covers the padding box, so the tape shows only where the
-   transparent border leaves it exposed, and the stripes stay continuous
-   around the corners because it is one pattern rather than three strips.
-   Borders also sit outside the scroll area, so it holds still while the
-   navigation scrolls. */
+/* The rail carries no framing edge - it reads as a flat panel, separated from
+   the workspace by its own slightly lifted surface colour rather than a rule. */
 .ams-sidebar{
   position:fixed;inset:0 auto 0 0;z-index:50;display:flex;width:var(--rail);flex-direction:column;overflow-y:auto;
-  border-top:4px solid transparent;border-right:4px solid transparent;border-bottom:4px solid transparent;
-  background:linear-gradient(var(--ams-rail),var(--ams-rail)) padding-box,${HAZARD} border-box;
-  color:${C.ink};box-shadow:14px 0 40px rgba(0,0,0,.5);transition:transform 220ms ease,width 220ms ease
+  background:var(--ams-rail);
+  color:${C.ink};transition:transform 220ms ease,width 220ms ease
 }
 .ams-side-head{display:flex;align-items:center;gap:9px;min-height:76px;padding:17px 16px;border-bottom:1px solid var(--ams-line)}
 /* The mark is the AMS emblem itself. It is gold on a dark globe, so the gold
@@ -1361,6 +2189,27 @@ const CHROME_CSS = `
 .ams-shell input:focus,.ams-shell select:focus,.ams-shell textarea:focus{border-color:var(--ams-yellow)!important;box-shadow:0 0 0 3px rgba(255,205,17,.25)}
 .ams-pop{position:absolute;top:calc(100% + 7px);z-index:60;padding:5px 0;border:1px solid var(--ams-line);border-radius:9px;background:var(--ams-surface-2);box-shadow:0 18px 55px rgba(0,0,0,.65);animation:ams-pop 140ms ease-out}
 @keyframes ams-pop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.ams-cart-tick{color:var(--ams-ok);animation:ams-tick-pop 340ms cubic-bezier(.22,1.35,.4,1)}
+/* The detail panel keeps station beside the list instead of sitting at the top
+   of it. With two hundred assets on the register, scrolling to one near the
+   bottom and clicking it used to fill a panel a screen and a half above where
+   the user was looking, so the click appeared to do nothing. It sticks below
+   the topbar, and scrolls inside itself when the asset it is showing is taller
+   than what is left of the screen.
+
+   Below the md breakpoint there is no second column - selecting an asset
+   replaces the list - so there it goes back to scrolling with the page. */
+.ams-detail{position:sticky;top:92px;max-height:calc(100vh - 108px);overflow-y:auto;overscroll-behavior:contain;
+ scrollbar-width:thin;scrollbar-color:var(--ams-line) transparent}
+.ams-detail::-webkit-scrollbar{width:8px}
+.ams-detail::-webkit-scrollbar-track{background:transparent}
+.ams-detail::-webkit-scrollbar-thumb{background:var(--ams-line);border-radius:20px}
+@media (max-width:767px){.ams-detail{position:static;max-height:none;overflow:visible}}
+.ams-strip{scrollbar-width:thin;scrollbar-color:var(--ams-line) transparent}
+.ams-strip::-webkit-scrollbar{height:8px}
+.ams-strip::-webkit-scrollbar-track{background:transparent}
+.ams-strip::-webkit-scrollbar-thumb{background:var(--ams-line);border-radius:20px}
+@keyframes ams-tick-pop{0%{opacity:.15;transform:scale(.45)}60%{opacity:1;transform:scale(1.22)}100%{opacity:1;transform:scale(1)}}
 .ams-item{display:flex;width:100%;align-items:flex-start;gap:10px;padding:9px 12px;border:0;background:transparent;color:${C.ink};font-family:${SANS};font-size:13.5px;text-align:left;cursor:pointer}
 .ams-item:hover:not(:disabled){background:var(--ams-surface);color:var(--ams-head)}
 .ams-item:disabled{opacity:.4;cursor:not-allowed}
@@ -1429,7 +2278,7 @@ const CHROME_CSS = `
   .ams-stat-v{margin-top:13px;font-size:30px}
   .ams-metric-v{font-size:24px}
 }
-@media (prefers-reduced-motion:reduce){.ams-sidebar,.ams-main,.ams-backdrop,.ams-pop,.ams-spin,.ams-ctl,.ams-nav-item,.ams-stat,.ams-stat:after,.ams-stat-icon,.ams-stat-progress{animation:none;transition:none}}
+@media (prefers-reduced-motion:reduce){.ams-sidebar,.ams-main,.ams-backdrop,.ams-pop,.ams-spin,.ams-cart-tick,.ams-ctl,.ams-nav-item,.ams-stat,.ams-stat:after,.ams-stat-icon,.ams-stat-progress{animation:none;transition:none}}
 `;
 
 
@@ -1467,7 +2316,15 @@ const MenuItem = ({ icon: Icon, hint, tone, children, onClick, disabled }) => (
   </button>
 );
 
-const OPERATIONAL_TABS = new Set(["assets", "transfers", "repairs", "parts", "maintenance", "map", "reports"]);
+/* Deleting is the one thing no delegated permission carries. A role may be
+   trusted to register, move, repair and retire, and still not be trusted to
+   erase — so destruction is answered by who you are, not by what your role was
+   granted. It is asked for through `can` like any other permission, which
+   means every control that already receives `can` is covered by it, and a
+   delete button added later cannot quietly miss the gate. */
+const DELETE_PERMISSION = "system.delete";
+
+const OPERATIONAL_TABS = new Set(["assets", "cart", "transfers", "repairs", "parts", "maintenance", "map", "reports"]);
 
 const userInitials = (identity) => {
   const head = String(identity.name || identity.email || "").split("@")[0];
@@ -1699,6 +2556,8 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
   /* a sticker somebody scanned, when it turns out to be for an asset this
      account cannot reach */
   const [scanMiss, setScanMiss] = useState("");
+  /* which workspace opened the reader, so its own button can close it */
+  const [scanning, setScanning] = useState(null);
   /* the sheet being looked at, and the asset whose sheets are being listed */
   const [formView, setFormView] = useState(null);
   const [formsFor, setFormsFor] = useState(null);
@@ -1725,9 +2584,28 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
   const [loc, setLoc] = useState("");
   const [comp, setComp] = useState("");
   const [showClosed, setShowClosed] = useState(false);
+  /* The cart is a list somebody builds while walking a yard, before deciding
+     where any of it goes, so it has to survive a reload the way the rail's
+     width does. Ids only: the assets themselves are read back out of the
+     register, so a cart can never disagree with it. */
+  const [cart, setCart] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("ams.transferCart") || "[]").filter((id) => typeof id === "string"); }
+    catch { return []; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("ams.transferCart", JSON.stringify(cart)); }
+    catch { /* private mode - the cart just does not survive the tab */ }
+  }, [cart]);
+
   const [dlg, setDlg] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [viewer, setViewer] = useState(null);
+  /* the asset's paperwork, opened at the one that was clicked */
+  const [gallery, setGallery] = useState(null);
+  /* The detail panel scrolls inside itself, so opening a second asset would
+     otherwise begin wherever the first one was left - halfway down somebody
+     else's custody trail. Each selection starts at the top of its own panel. */
+  const detail = useRef(null);
   const [assetImport, setAssetImport] = useState(false);
   const [notice, setNotice] = useState("");
   const [legacyBrowserData, setLegacyBrowserData] = useState(null);
@@ -1735,8 +2613,8 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
   const closeNav = useCallback(() => setNavOpen(false), []);
 
   const permissionSet = useMemo(() => new Set(access?.permissions || []), [access]);
-  const can = (permission) => permissionSet.has(permission);
   const isSuperAdmin = access?.is_super_admin === true;
+  const can = (permission) => (permission === DELETE_PERMISSION ? isSuperAdmin : permissionSet.has(permission));
   const allowedCompanyIds = useMemo(() => new Set(access?.company_ids || []), [access]);
   const allowedCompanyNames = useMemo(() => new Set((access?.company_names || []).map(normKey)), [access]);
   const allowedGroupIds = useMemo(() => new Set(access?.asset_group_ids || []), [access]);
@@ -1843,6 +2721,8 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
     }
   };
 
+  useEffect(() => { detail.current?.scrollTo({ top: 0 }); }, [sel]);
+
   const openJob = useCallback(
     (assetId) => allowedRepairs.find((r) => r.assetId === assetId && !r.closed) || null,
     [allowedRepairs],
@@ -1854,6 +2734,44 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
   const pendingParts = allowedRepairs.flatMap((r) => r.closed ? [] : (r.parts || [])).filter((p) => p.state !== "Purchased").length;
   const plansOf = (id) => allowedPlans.filter((p) => p.assetId === id);
   const duePlans = allowedPlans.filter((p) => daysUntil(p.nextDue) <= 30);
+
+  /* an asset that has left the register, or the user's scope, quietly leaves
+     the cart with it rather than failing at the point of transfer */
+  const cartAssets = useMemo(
+    () => cart.map((id) => allowedAssets.find((asset) => asset.id === id)).filter(Boolean),
+    [cart, allowedAssets],
+  );
+  /* An asset on a repair ticket is not the yard's to move — it is where the
+     repair is. A retired one is not moving anywhere either. Neither gets the
+     cart control, and neither can be ticked once the cart is opened. */
+  const cartable = useCallback(
+    (asset) => !!asset && asset.status !== "retired" && !openJob(asset.id),
+    [openJob],
+  );
+  /* what the cart holds against what the cart can actually move */
+  const movableCart = useMemo(() => cartAssets.filter(cartable), [cartAssets, cartable]);
+  const inCart = useCallback((id) => cart.includes(id), [cart]);
+  const toggleCart = useCallback(
+    (id) => setCart((held) => (held.includes(id) ? held.filter((one) => one !== id) : [...held, id])),
+    [],
+  );
+  const clearCart = useCallback(() => setCart([]), []);
+  /* Ticking an asset into the cart is a decision about what the next transfer
+     moves, so it is asked for rather than taken — a stray tap while reading
+     down a long list should not quietly add a machine to the paperwork.
+     Taking one back out needs no such ceremony: that is how a mistaken tick
+     gets corrected, and asking twice would only stand in the way. */
+  const askAddToCart = useCallback((asset) => {
+    if (!asset) return;
+    if (cart.includes(asset.id)) return toggleCart(asset.id);
+    const held = cart.length;
+    setConfirm({
+      title: `Add ${asset.tag} to the transfer cart?`,
+      body: `${asset.name} ${held ? `joins ${held} ${held === 1 ? "asset" : "assets"} already in the cart` : "starts the cart"}. Nothing moves yet — the cart holds what is going until the transfer is recorded.`,
+      confirm: "Add to cart", cancel: "Cancel", kind: "solid",
+      run: () => toggleCart(asset.id),
+    });
+  }, [cart, toggleCart]);
 
   /* every movement in the register, for the rail badge and the tab itself */
   const transferCount = useMemo(
@@ -1891,6 +2809,9 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
       nextTag: issuedTag || `AST-${n.length ? Math.max(...n) + 1 : 1}`,
       tagIsIssued: !!issuedTag,
       job: currentJob,
+      /* a filed document is opened through the same viewer as a receipt or a
+         signed form, which already knows how to show a scan and a PDF */
+      openFile: (row) => setViewer({ kind: "document", meta: { ...row, name: row.label } }),
     };
   }, [assets, allowedAssets, allowedRepairs, allowedPlans, allowedCompanies, allowedCategories, projects, people, currentJob, issuedTag, brands, access, currentUser]);
 
@@ -1909,26 +2830,105 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
      panel — the paper is real, the access is what is missing. */
   const transferMissing = !!transferId && !loading && !transferView;
 
+  /* A code read from a sticker or a photograph. Where it leads is decided by
+     what it holds, not by which workspace was open when it was read: a transfer
+     code opens the movement even from the asset list, and the other way round.
+     Nothing is found when the record is outside this account's companies,
+     which is answered plainly rather than silently. */
+  const followScan = (text) => {
+    const scan = readScan(text);
+    setScanning(null);
+    if (!scan) return setScanMiss(String(text || "").slice(0, 80) || "an empty code");
+    if (scan.kind === "transfer") {
+      const movement = movementsOf(allowedAssets).find(({ entry }) => entry.id === scan.value);
+      if (!movement) return setScanMiss(`transfer ${scan.value}`);
+      setTab("transfers");
+      setTransferId(scan.value);
+      return undefined;
+    }
+    const asset = allowedAssets.find((a) => matchesScan(a, scan.value));
+    if (!asset) return setScanMiss(scan.value);
+    setTab("assets");
+    setSel(asset.id);
+    return undefined;
+  };
+
   const formActions = {
     view: (entry, asset) => setFormView(formDataOf(entry, asset, companies)),
     print: (entry, asset) => printTransferForm(formDataOf(entry, asset, companies)),
     download: (entry, asset) => downloadTransferForm(formDataOf(entry, asset, companies)),
   };
 
-  const attachTransferForm = async (file, note) => {
-    if (!requirePermission("asset.transfer", "filing a signed transfer form")) return;
+  /* Filing or detaching a form changes one row of one movement. Reloading the
+     whole register for it — sixteen tables and the numbering call — is what
+     made this feel slow, so the panel's own copy is corrected in place and the
+     server is left alone. */
+  const patchTransferFiles = useCallback((assetId, entryId, update) => setAssets((previous) => previous.map((asset) => (
+    asset.id === assetId
+      ? { ...asset, history: (asset.history || []).map((entry) => (entry.id === entryId ? { ...entry, files: update(entry.files || []) } : entry)) }
+      : asset
+  ))), []);
+
+  /* Answers whether the form is filed, so the panel keeps a typed note on the
+     screen when the upload failed rather than throwing it away. */
+  const attachTransferForm = async (file, details) => {
+    if (!requirePermission("asset.transfer", "filing a signed transfer form")) return false;
     if (file.size > 10 * 1024 * 1024) {
       setSaveErr(`That file is ${kb(file.size)}. The limit is 10 MB — photograph the sheet at a smaller size.`);
-      return;
+      return false;
     }
-    await runServerMutation(() => saveTransferAttachment(transferId, file, note), "Signed form filed against the transfer.").catch(() => {});
+    const assetId = transferView?.asset?.id;
+    if (!assetId) return false;
+    setSaving(true); setSaveErr("");
+    try {
+      const filed = await saveTransferAttachment(transferId, file, details);
+      patchTransferFiles(assetId, transferId, (files) => [...files, filed]);
+      setNotice("Signed form filed against the transfer.");
+      return true;
+    } catch (error) {
+      setSaveErr(error.message || "Supabase rejected the change. Your input was not recorded as saved.");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const renameTransferForm = async (file, name) => {
+    if (!requirePermission("asset.transfer", "renaming a filed transfer form")) return false;
+    const assetId = transferView?.asset?.id;
+    if (!assetId) return false;
+    setSaving(true); setSaveErr("");
+    try {
+      const renamed = await renameTransferAttachment(file.id, name);
+      patchTransferFiles(assetId, file.transferId || transferId, (kept) => kept.map((one) => (one.id === renamed.id ? renamed : one)));
+      setNotice("Form renamed.");
+      return true;
+    } catch (error) {
+      setSaveErr(error.message || "Supabase rejected the change. Your input was not recorded as saved.");
+      return false;
+    } finally {
+      setSaving(false);
+    }
   };
 
   const detachTransferForm = (file) => setConfirm({
     title: `Detach ${file.name}?`,
     body: "The file is removed from storage. The transfer itself is not affected, and the form can be filed again.",
     confirm: "Detach form",
-    run: () => runServerMutation(() => removeTransferAttachment(file), "Form detached.").catch(() => {}),
+    run: async () => {
+      if (!requirePermission(DELETE_PERMISSION, "detaching a filed transfer form")) return;
+      const assetId = transferView?.asset?.id;
+      setSaving(true); setSaveErr("");
+      try {
+        await removeTransferAttachment(file);
+        if (assetId) patchTransferFiles(assetId, file.transferId || transferId, (kept) => kept.filter((one) => one.id !== file.id));
+        setNotice("Form detached.");
+      } catch (error) {
+        setSaveErr(error.message || "Supabase rejected the change. Your input was not recorded as saved.");
+      } finally {
+        setSaving(false);
+      }
+    },
   });
 
   /* search + dropdowns narrow the pool; the status chips then split whatever is left */
@@ -1975,9 +2975,14 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
     return c;
   }, [scoped, bucketOf]);
 
+  /* Newest registration first. Somebody who has just added a machine expects to
+     see it without scrolling, and the oldest end of the register is the part
+     nobody is looking for. Sorting by tag as text put AST-10 before AST-2, so
+     the number is read as a number where a timestamp is missing. */
   const shown = useMemo(() => scoped
     .filter((a) => filter === "all" || bucketOf(a) === filter)
-    .sort((a, b) => String(a.tag).localeCompare(String(b.tag))), [scoped, filter, bucketOf]);
+    .sort((a, b) => String(b.created || "").localeCompare(String(a.created || "")) || assetSeq(b) - assetSeq(a)),
+  [scoped, filter, bucketOf]);
 
   /* A scanner types the sticker code in one burst; an exact match opens it. */
   const handleAssetQuery = (value) => {
@@ -2000,7 +3005,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
   const projectIdFor = (code) => projects.find((item) => normKey(item.pid) === normKey(code))?.id || null;
 
   const runAsset = async (name, vals) => {
-    const permission = name === "register" ? "asset.create" : name === "transfer" ? "asset.transfer" : ["retire", "reinstate"].includes(name) ? "asset.retire" : "asset.update";
+    const permission = name === "register" ? "asset.create" : ["transfer", "transferCart"].includes(name) ? "asset.transfer" : ["retire", "reinstate"].includes(name) ? "asset.retire" : "asset.update";
     if (!requirePermission(permission, ASSET_ACTIONS[name].title.toLowerCase())) return;
     try {
       const scoped = {
@@ -2011,38 +3016,68 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
         ...(["register", "edit"].includes(name) ? clearedVehicle(vals.category) : {}),
         companyId: companyIdFor(vals.company),
         categoryId: categoryIdFor(vals.category),
-        projectId: ["register", "transfer"].includes(name) ? projectIdFor(vals.project) : name === "edit" ? current.projectId : null,
+        projectId: ["register", "transfer", "transferCart"].includes(name) ? projectIdFor(vals.project) : name === "edit" ? current.projectId : null,
       };
-      /* The field hands back a File when a photo was picked, null when it was
-         cleared, and the untouched URL when neither happened. Upload before the
-         row is written so a storage failure stops early, and delete the picture
-         it replaces only once the row is safely saved. */
-      const picked = scoped.photo && typeof scoped.photo !== "string" ? scoped.photo : null;
-      if (picked && picked.size > PHOTO_LIMIT) throw new Error(`That photo is ${kb(picked.size)}. The limit is 10 MB — use a smaller image.`);
-      const held = name === "edit" ? current?.photoPath || "" : "";
-      const cleared = scoped.photo === null || scoped.photo === "";
       let result;
+      let fileTrouble = [];
       if (name === "register") {
-        const photoPath = picked ? await uploadAssetPhoto(picked) : "";
+        const shots = await uploadImages(scoped.photos);
+        /* the column still points at the cover, so the three places that draw a
+           single thumbnail keep working without knowing about the list */
+        const photoPath = shots[0]?.path || "";
         try {
-          result = await runServerMutation(() => createAsset({ ...scoped, photoPath }));
+          result = await runServerMutation(async () => {
+            const created = await createAsset({ ...scoped, photoPath });
+            /* filed inside the mutation, so the reload that follows already
+               shows the pictures and the paperwork rather than needing a
+               second refresh */
+            fileTrouble = [
+              ...await settleImages(created.id, shots, []),
+              ...await settleFiles(created.id, scoped.files, []),
+            ];
+            return created;
+          });
         } catch (error) {
-          if (photoPath) await deleteAssetPhoto(photoPath).catch(() => {});
+          /* nothing was filed, so everything just uploaded is an orphan */
+          for (const shot of shots) if (shot.path) await deleteAssetPhoto(shot.path).catch(() => {});
           throw error;
         }
         setNotice(result?.asset_number ? `Asset ${result.asset_number} registered.` : "Asset registered in Supabase.");
       }
       else if (name === "edit") {
-        const photoPath = picked ? await uploadAssetPhoto(picked) : cleared ? "" : held;
+        const shots = await uploadImages(scoped.photos);
+        const photoPath = shots[0]?.path || "";
         await runServerMutation(async () => {
           const saved = await updateAsset(current.id, { ...current, ...scoped, photoPath });
-          if (held && held !== photoPath) await deleteAssetPhoto(held);
+          /* the picture this replaces is deleted only if it was taken out of
+             the list - reordering must not destroy what it demoted */
+          fileTrouble = [
+            ...await settleImages(current.id, shots, current.images || []),
+            ...await settleFiles(current.id, scoped.files, current.files || []),
+          ];
           return saved;
         }, "Asset updated.");
       }
       else if (name === "transfer") await runServerMutation(() => transferAsset(current, scoped), "Transfer recorded.");
+      else if (name === "transferCart") {
+        const picked = new Set(vals.picked || []);
+        const moving = movableCart.filter((asset) => picked.has(asset.id));
+        /* the surrounding catch is there to keep a rejected form open, and it
+           swallows what it catches, so this says its piece itself */
+        if (!moving.length) { setSaveErr("Tick at least one asset to move."); return; }
+        await runServerMutation(() => transferAssets(moving, scoped));
+        /* only what moved leaves the cart; anything left unticked is still
+           waiting to go somewhere, and throwing it away would be a surprise */
+        setCart((held) => held.filter((id) => !picked.has(id)));
+        setNotice(`${moving.length} ${moving.length === 1 ? "transfer" : "transfers"} recorded.`);
+      }
       else if (name === "retire") await runServerMutation(() => retireAsset(current.id, vals), "Asset retired with its history preserved.");
       else await runServerMutation(() => reinstateAsset(current.id, { ...vals, projectId: current.projectId }), "Asset returned to service.");
+      /* the asset row is saved either way, so a document that would not go up
+         is said out loud rather than left to be noticed weeks later */
+      if (fileTrouble.length) {
+        setSaveErr(`The asset was saved, but ${fileTrouble.join(" and ")} could not be filed. Open Edit details to try again.`);
+      }
       if (result?.id) setSel(result.id);
       setDlg(null);
     } catch { /* keep the form open with its unsaved values */ }
@@ -2207,7 +3242,27 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
         const tk = String(vals.ticket).split(" · ")[0];
         const j = repairs.find((r) => r.ticket === tk);
         if (!j) throw new Error("The selected repair ticket is no longer available.");
-        await runServerMutation(async () => { await createRepairPart(j.id, { ...vals, qty: 1, estimated: vals.amount, state: "Needed" }); if (name === "needPart") await updateRepair(j.id, { stage: "parts" }); }, "Repair part request recorded.");
+        /* Add parts carries a list; Parts needed is still one at a time. */
+        const rows = name === "addPart"
+          ? (vals.parts || []).filter((row) => String(row.name || "").trim())
+          : [{ name: vals.name, amount: vals.amount, supplier: vals.supplier, date: vals.date }];
+        if (!rows.length) { setSaveErr("Name at least one part."); return; }
+        /* Each line is attempted on its own, so one part the server rejects
+           does not cost the four beside it that were fine. */
+        const failed = [];
+        await runServerMutation(async () => {
+          for (const row of rows) {
+            try { await createRepairPart(j.id, { ...row, qty: 1, estimated: row.amount, state: "Needed" }); }
+            catch (error) { failed.push({ name: String(row.name).trim(), error }); }
+          }
+          /* nothing landed at all - let the wrapper say so, keep the form open
+             with what was typed, and leave the ticket's stage alone */
+          if (failed.length === rows.length) throw failed[0].error;
+          if (name === "needPart") await updateRepair(j.id, { stage: "parts" });
+        });
+        const saved = rows.length - failed.length;
+        if (failed.length) setSaveErr(`${saved} of ${rows.length} parts were recorded. ${failed.map((one) => one.name).join(", ")} could not be saved.`);
+        else setNotice(`${saved} ${saved === 1 ? "part" : "parts"} recorded.`);
       } else {
         const j = repairs.find((r) => r.id === dlg.jobId);
         const was = (j?.parts || []).find((p) => p.id === dlg.partId) || {};
@@ -2224,42 +3279,76 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
   };
 
   const removeReceipt = async (jobId, partId, meta) => {
-    if (!requirePermission("purchasing.manage", "removing purchase receipts")) return;
+    if (!requirePermission(DELETE_PERMISSION, "removing purchase receipts")) return;
     try { await runServerMutation(() => removeStoredReceipt(meta), "Receipt removed."); setViewer(null); }
     catch { /* viewer remains open */ }
   };
 
   const dropPart = async (jId, pId, part) => {
-    if (!requirePermission("parts.manage", "removing repair parts")) return;
+    if (!requirePermission(DELETE_PERMISSION, "removing repair parts")) return;
     try { await runServerMutation(async () => { if (part?.receipt) await removeStoredReceipt(part.receipt); await deleteRepairPart(pId); }, "Repair part removed."); }
     catch { /* server state is reloaded by the mutation wrapper */ }
   };
 
   /* ---------- files ---------- */
-  const dl = (blob, name) => { const u = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = u; a.download = name; a.click(); URL.revokeObjectURL(u); };
-  const downloadImportReport = (report, source) => dl(new Blob([JSON.stringify({ source, completedAt: new Date().toISOString(), ...report }, null, 2)], { type: "application/json" }), `legacy-import-report-${today()}.json`);
-  const csv = (head, rows, name) => dl(new Blob([createCsvContent(head, rows)], { type: "text/csv;charset=utf-8" }), name);
-  const exportCsv = () => {
-    if (!requirePermission("reports.export", "exporting data")) return;
-    if (tab === "transfers") csv(["date", "asset", "name", "from_address", "to_address", "from_custodian", "to_custodian", "from_project", "to_project", "reason"],
-      movementsOf(allowedAssets).map(({ entry, asset }) => [entry.date, asset.tag, asset.name,
+  const downloadImportReport = (report, source) => saveBlob(new Blob([JSON.stringify({ source, completedAt: new Date().toISOString(), ...report }, null, 2)], { type: "application/json" }), `legacy-import-report-${today()}.json`);
+  const csv = (head, rows, name) => saveBlob(new Blob([CSV_BOM + createCsvContent(head, rows)], { type: "text/csv;charset=utf-8" }), name);
+  /* One description of what the current tab exports, so the CSV and the
+     workbook can never disagree about the columns. Returns null on a tab that
+     has nothing of its own to export. */
+  const exportTable = () => {
+    if (tab === "transfers") return { name: `transfers-${today()}`, sheet: "Transfers",
+      head: ["date", "asset", "name", "from_address", "to_address", "from_custodian", "to_custodian", "from_project", "to_project", "reason"],
+      rows: movementsOf(allowedAssets).map(({ entry, asset }) => [entry.date, asset.tag, asset.name,
         entry.move?.fromLoc || "", entry.move?.toLoc || "", entry.move?.fromPer || "", entry.move?.toPer || "",
-        projectLabel(entry.move?.fromProject), projectLabel(entry.move?.project), entry.move?.why || ""]),
-      `transfers-${today()}.csv`);
-    else if (tab === "repairs") csv(["ticket", "asset", "name", "fault", "stage", "provider", "technician", "reported", "parts", "labour", "other", "total"],
-      allowedRepairs.map((r) => { const a = assetOf(r) || {}; return [r.ticket, a.tag, a.name, r.fault, r.closed ? "Closed" : STAGES[r.stage].label, r.provider, r.technician, r.date, partsTotal(r), num(r.labor), num(r.other), repairTotal(r)]; }), `repairs-${today()}.csv`);
-    else if (tab === "parts") csv(["ticket", "asset", "part", "status", "qty", "unit_price", "line_total", "supplier", "reference", "date", "receipt"],
-      allowedRepairs.flatMap((r) => (r.parts || []).map((p) => { const a = assetOf(r) || {};
-        return [r.ticket, a.tag, p.name, p.state, num(p.qty) || 1, num(p.unit), num(p.unit) * (num(p.qty) || 1), p.supplier, p.ref, p.date, p.receipt ? p.receipt.name : "none"]; })),
-      `parts-${today()}.csv`);
-    else if (tab === "maintenance") csv(["asset", "name", "schedule", "every", "next_due", "status", "last_done", "provider", "times_done", "total_spent"],
-      allowedPlans.map((p) => { const a = allowedAssets.find((x) => x.id === p.assetId) || {}; return [a.tag, a.name, p.name, everyLabel(p), p.nextDue, dueOf(p).label, p.lastDone || "", p.provider, (p.done || []).length, planSpend(p)]; }), `maintenance-${today()}.csv`);
-    else csv(["tag", "asset_code", "company", "project_location", "name", "category", "brand", "model", "serial_or_chassis", "engine_no", "plate_no", "mv_file_no", "conduction_sticker", "body_no", "address", "custodian", "acquired", "cost", "availability", "notes"],
-      allowedAssets.map((a) => [a.tag, a.code, a.company, a.project || NO_PROJECT, a.name, a.category, a.brand, a.model, a.serial, a.engine, a.plate, a.mvFile, a.conduction, a.body, a.location, a.custodian, a.acquired, a.cost, availOf(a, openJob(a.id)).label, a.notes]), `assets-${today()}.csv`);
+        projectLabel(entry.move?.fromProject), projectLabel(entry.move?.project), entry.move?.why || ""]) };
+    if (tab === "repairs") return { name: `repairs-${today()}`, sheet: "Repairs",
+      head: ["ticket", "asset", "name", "fault", "stage", "provider", "technician", "reported", "parts", "labour", "other", "total"],
+      rows: allowedRepairs.map((r) => { const a = assetOf(r) || {}; return [r.ticket, a.tag, a.name, r.fault, r.closed ? "Closed" : STAGES[r.stage].label, r.provider, r.technician, r.date, partsTotal(r), num(r.labor), num(r.other), repairTotal(r)]; }) };
+    if (tab === "parts") return { name: `parts-${today()}`, sheet: "Parts",
+      head: ["ticket", "asset", "part", "status", "qty", "unit_price", "line_total", "supplier", "reference", "date", "receipt"],
+      rows: allowedRepairs.flatMap((r) => (r.parts || []).map((p) => { const a = assetOf(r) || {};
+        return [r.ticket, a.tag, p.name, p.state, num(p.qty) || 1, num(p.unit), num(p.unit) * (num(p.qty) || 1), p.supplier, p.ref, p.date, p.receipt ? p.receipt.name : "none"]; })) };
+    if (tab === "maintenance") return { name: `maintenance-${today()}`, sheet: "Maintenance",
+      head: ["asset", "name", "schedule", "every", "next_due", "status", "last_done", "provider", "times_done", "total_spent"],
+      rows: allowedPlans.map((p) => { const a = allowedAssets.find((x) => x.id === p.assetId) || {}; return [a.tag, a.name, p.name, everyLabel(p), p.nextDue, dueOf(p).label, p.lastDone || "", p.provider, (p.done || []).length, planSpend(p)]; }) };
+    if (!["assets", "map"].includes(tab)) return null;
+    /* `shown`, not every asset in scope: the menu entry promises "Assets in
+       your current view", and until now it quietly ignored the search box and
+       the status filter and exported the lot. */
+    return { name: `assets-${today()}`, sheet: "Assets",
+      head: ["tag", "asset_code", "company", "project_location", "name", "category", "brand", "model", "serial_or_chassis", "engine_no", "plate_no", "mv_file_no", "conduction_sticker", "body_no", "address", "custodian", "acquired", "cost", "availability", "asset_image", "attachments", "attachment_types", "notes"],
+      rows: shown.map((a) => [a.tag, a.code, a.company, a.project || NO_PROJECT, a.name, a.category, a.brand, a.model, a.serial, a.engine, a.plate, a.mvFile, a.conduction, a.body, a.location, a.custodian, a.acquired, a.cost, availOf(a, openJob(a.id)).label,
+        /* whether anyone can tell this machine apart on sight, and what
+           paperwork says it is the company's - the two things the register
+           holds that a column of numbers cannot show */
+        a.photoUrl ? "Yes" : "No",
+        (a.files || []).length ? "Yes" : "No",
+        docTypeSummary(a.files),
+        a.notes]) };
   };
+
+  /* Every way out of here reports what happened. An export that quietly
+     produced nothing - no file, no message - is indistinguishable from a dead
+     button, so anything that goes wrong is said out loud instead. */
+  const runExport = (kind) => {
+    if (!requirePermission("reports.export", "exporting data")) return;
+    try {
+      const table = exportTable();
+      if (!table) return setSaveErr("This tab has nothing of its own to export.");
+      if (!table.rows.length) return setSaveErr("There is nothing in the current view to export. Clear the search or filters and try again.");
+      if (kind === "xlsx") saveBlob(buildWorkbook(table.head, table.rows, table.sheet), `${table.name}.xlsx`);
+      else csv(table.head, table.rows, `${table.name}.csv`);
+      setNotice(`${table.rows.length} ${table.rows.length === 1 ? "row" : "rows"} exported as ${kind === "xlsx" ? "Excel" : "CSV"}.`);
+    } catch (error) {
+      setSaveErr(`The export could not be produced: ${error.message || error}`);
+    }
+  };
+  const exportCsv = () => runExport("csv");
+  const exportXlsx = () => runExport("xlsx");
   const exportJson = async () => {
     if (!isSuperAdmin) return setSaveErr("Only a Super Admin can export the complete authorized register.");
-    dl(new Blob([JSON.stringify({ source: "supabase", exportedAt: new Date().toISOString(), assets, repairs, plans, companies, categories, projects, receiptFiles: "Stored privately in Supabase Storage; export contains metadata only." }, null, 2)], { type: "application/json" }), `supabase-register-backup-${today()}.json`);
+    saveBlob(new Blob([JSON.stringify({ source: "supabase", exportedAt: new Date().toISOString(), assets, repairs, plans, companies, categories, projects, receiptFiles: "Stored privately in Supabase Storage; export contains metadata only." }, null, 2)], { type: "application/json" }), `supabase-register-backup-${today()}.json`);
   };
   const importJson = (e) => {
     if (!isSuperAdmin) return setSaveErr("Only a Super Admin can import legacy browser data.");
@@ -2317,7 +3406,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
       })() } : partOf(dlg))
     : dlg.kind === "plan"
     ? (dlg.planId ? plans.find((p) => p.id === dlg.planId) : { assetTag: current ? `${current.tag} — ${current.name}` : "" })
-    : dlg.kind === "asset" ? (dlg.name === "register" ? null : current) : assets.find((a) => a.id === dlg.assetId));
+    : dlg.kind === "asset" ? (dlg.name === "register" ? null : dlg.name === "transferCart" ? { cart: movableCart } : current) : assets.find((a) => a.id === dlg.assetId));
   const dlgHeader = dlg && (() => {
     if (["company", "category", "project", "brand"].includes(dlg.kind)) return null;
     if (dlg.kind === "part") {
@@ -2325,17 +3414,19 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
       const a = j && assets.find((x) => x.id === j.assetId);
       return j ? `${j.ticket} · ${a?.tag || ""} · ${partOf(dlg).name || ""}` : null;
     }
+    if (dlg.kind === "asset" && dlg.name === "transferCart") return `${movableCart.length} ${movableCart.length === 1 ? "asset" : "assets"} in the cart`;
     const a = dlg.kind === "plan" && dlg.planId ? assets.find((x) => x.id === plans.find((p) => p.id === dlg.planId)?.assetId)
       : dlg.kind === "repair" ? assets.find((x) => x.id === dlg.assetId) : (dlg.name === "register" ? null : current);
     return a ? `${a.tag} · ${a.name}` : null;
   })();
   const tabs = [
     ["assets", "Assets", ClipboardList, allowedAssets.length, C.ink, can("asset.view")],
+    ["cart", "Transfer cart", ShoppingBasket, cartAssets.length, C.ink, can("asset.transfer")],
     ["transfers", "Transfers", ArrowLeftRight, transferCount, C.ink, can("asset.view")],
     ["repairs", "Repairs", Wrench, openTickets.length, STAGES.ongoing.color, can("repair.view")],
     ["parts", "Parts", ShoppingCart, pendingParts, PART_COLOR.Ordered, can("parts.view")],
     ["maintenance", "Maintenance", CalendarClock, duePlans.length, C.due, can("maintenance.view")],
-    ["map", "Asset Map", Map, null, C.ink, can("map.view")],
+    ["map", "Asset Map", MapIcon, null, C.ink, can("map.view")],
     ["reports", "Reports", BarChart3, null, C.ink, can("reports.view") || can("reports.purchasing")],
     ["settings", "Settings", Settings, null, C.ink, isSuperAdmin],
     ["users", "User Management", Users, null, C.active, can("users.manage") && isSuperAdmin],
@@ -2359,7 +3450,8 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
 
   const dataActions = [
     ...(can("reports.export") && csvScope
-      ? [{ key: "csv", icon: Download, label: csvScope.label, hint: csvScope.hint, onClick: exportCsv }] : []),
+      ? [{ key: "csv", icon: Download, label: csvScope.label, hint: csvScope.hint, onClick: exportCsv },
+         { key: "xlsx", icon: Layers, label: csvScope.label.replace("CSV", "Excel"), hint: `${csvScope.hint} — opens straight into Excel`, onClick: exportXlsx }] : []),
     /* Populating the register from a spreadsheet is an asset job, so it lives
        with the assets and stays clear of the JSON legacy restore below. */
     ...(tab === "assets" && can("asset.create")
@@ -2477,6 +3569,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
               <input value={q} onChange={(e) => handleAssetQuery(e.target.value)} placeholder="Scan a QR code, or search tag, name, serial, body no., location, person"
                 style={{ ...inputStyle, paddingLeft: 32 }} />
             </div>
+            <Btn icon={QrCode} onClick={() => setScanning("assets")}>Scan</Btn>
             <select value={cat} onChange={(e) => setCat(e.target.value)}
               style={{ ...inputStyle, width: "auto", minWidth: 160, color: cat ? C.ink : C.mute }}>
               <option value="">All categories</option>
@@ -2512,42 +3605,90 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
                   const s = availOf(a, openJob(a.id));
                   const dueHere = plansOf(a.id).filter((p) => daysUntil(p.nextDue) <= 30).sort((x, y) => dueOf(x).rank - dueOf(y).rank)[0];
                   return (
-                    <button key={a.id} onClick={() => setSel(a.id)} className="ams-list-row w-full text-left px-4 py-3 flex gap-3 items-start"
+                    /* the row is a wrapper rather than one button, because the
+                       cart toggle beside it cannot be nested inside one */
+                    <div key={a.id} className="ams-list-row flex items-stretch"
                       style={{ borderBottom: `1px solid ${C.ruleSoft}`, background: sel === a.id ? C.soft : "transparent", borderLeft: `3px solid ${sel === a.id ? s.color : "transparent"}` }}>
-                      <div className="pt-1"><Dot color={s.color} /></div>
-                      {/* the picture, where there is one: a row is quicker to
-                          recognise by the machine than by its number. Rows
-                          without one keep the same empty frame, so the names
-                          below still line up down the list. */}
-                      {a.photoUrl ? (
-                        <img src={a.photoUrl} alt={`Asset image — ${a.tag}`} title={`Asset image — ${a.tag}`}
-                          style={{ width: 44, height: 44, flexShrink: 0, objectFit: "cover",
-                            borderRadius: 2, border: `1px solid ${C.ruleSoft}`, background: C.soft }} />
-                      ) : (
-                        <span aria-hidden="true" title={`No asset image — ${a.tag}`}
-                          style={{ width: 44, height: 44, flexShrink: 0, display: "grid", placeItems: "center",
-                            borderRadius: 2, border: `1px solid ${C.ruleSoft}`, background: C.soft }}>
-                          <Package size={16} style={{ color: C.dim }} />
-                        </span>
-                      )}
-                      {/* a short rule, not a full one: it separates the image
-                          from the details without cutting the row in two */}
-                      <span aria-hidden="true" style={{ width: 1, height: 28, marginTop: 8, flexShrink: 0, background: C.ruleSoft }} />
+                      <button type="button" onClick={() => setSel(a.id)} className="min-w-0 flex-1 text-left px-4 py-3 flex gap-3 items-center">
+                      {/* The picture carries the left of the row, because a
+                          yard is remembered by machines rather than by asset
+                          numbers. Rows without one keep the same frame, so
+                          everything to the right still lines up down the list,
+                          and where there is more than one photograph the count
+                          says so rather than hiding the rest. */}
+                      <span className="relative shrink-0" style={{ width: 52, height: 52 }}>
+                        {a.photoUrl ? (
+                          <img src={a.photoUrl} alt={`Asset image — ${a.tag}`} title={`Asset image — ${a.tag}`}
+                            style={{ width: "100%", height: "100%", display: "block", objectFit: "cover",
+                              borderRadius: 7, border: `1px solid ${C.ruleSoft}`, background: C.soft }} />
+                        ) : (
+                          <span aria-hidden="true" title={`No asset image — ${a.tag}`}
+                            style={{ width: "100%", height: "100%", display: "grid", placeItems: "center",
+                              borderRadius: 7, border: `1px solid ${C.ruleSoft}`, background: C.soft }}>
+                            <Package size={17} style={{ color: C.dim }} />
+                          </span>
+                        )}
+                        {a.images?.length > 1 && (
+                          <span aria-hidden="true" title={`${a.images.length} images`}
+                            style={{ position: "absolute", right: -5, bottom: -5, minWidth: 18, height: 18,
+                              padding: "0 4px", display: "grid", placeItems: "center", borderRadius: 999,
+                              background: C.surface, border: `1px solid ${C.rule}`,
+                              fontFamily: MONO, fontSize: 9.5, fontWeight: 700, color: C.mute }}>
+                            {a.images.length}
+                          </span>
+                        )}
+                      </span>
+                      {/* a rule, not a gap: it separates the machine from what
+                          the register knows about it without cutting the row */}
+                      <span aria-hidden="true" style={{ width: 1, alignSelf: "stretch", flexShrink: 0, background: C.ruleSoft }} />
                       <div className="min-w-0 flex-1">
-                        <div className="uppercase flex items-center gap-2" style={{ fontFamily: MONO, fontSize: 11, letterSpacing: "0.1em", color: s.color }}>
-                          {a.tag}<span style={{ opacity: 0.75, letterSpacing: "0.06em" }}>{s.label}</span>
+                        {/* the number identifies it, the pill says whether it
+                            is anywhere it can be used from - one line, because
+                            they are read together */}
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="uppercase truncate" style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: C.head }}>{a.tag}</span>
+                          {/* tint alone, no border: the colours here are CSS
+                              variables, and "var(--x)22" is not a colour - the
+                              declaration is simply dropped */}
+                          <span className="uppercase shrink-0" style={{ fontFamily: SANS, fontSize: 9, fontWeight: 800, letterSpacing: "0.06em",
+                            color: s.color, background: s.tint, borderRadius: 20, padding: "2px 7px" }}>{s.label}</span>
                         </div>
-                        <div className="truncate" style={{ fontSize: 14, fontWeight: 500 }}>{a.name}</div>
-                        <div className="truncate" style={{ fontSize: 12, color: C.mute }}>{a.location} · {a.custodian}</div>
+                        <div className="truncate" style={{ fontSize: 14, fontWeight: 600, marginTop: 3, lineHeight: 1.25 }}>{a.name}</div>
+                        <div className="flex items-center gap-1.5 mt-1" style={{ fontSize: 12, color: C.mute, minWidth: 0 }}>
+                          <MapPin size={11} style={{ flexShrink: 0, color: C.dim }} />
+                          <span className="truncate">{a.location}</span>
+                          <span aria-hidden="true" style={{ flexShrink: 0, color: C.rule }}>·</span>
+                          <span className="truncate">{a.custodian}</span>
+                          {dueHere && <CalendarClock size={12} style={{ marginLeft: "auto", flexShrink: 0, color: dueOf(dueHere).color }} />}
+                        </div>
                       </div>
-                      {dueHere && <CalendarClock size={14} style={{ color: dueOf(dueHere).color, marginTop: 4, flexShrink: 0 }} />}
-                    </button>
+                      </button>
+                      {can("asset.transfer") && (cartable(a) ? (
+                        <button type="button" onClick={() => askAddToCart(a)} aria-pressed={inCart(a.id)}
+                          title={inCart(a.id) ? `Remove ${a.tag} from the transfer cart` : `Add ${a.tag} to the transfer cart`}
+                          aria-label={inCart(a.id) ? `Remove ${a.tag} from the transfer cart` : `Add ${a.tag} to the transfer cart`}
+                          className="px-3 flex items-center hover:opacity-70"
+                          style={{ color: C.dim, background: inCart(a.id) ? TINT.ok : "transparent", borderLeft: `1px solid ${C.ruleSoft}` }}>
+                          {/* once it is in the cart the control stops being an
+                              invitation and becomes a receipt: the trolley is
+                              replaced by a green tick, which lands with the tap
+                              that put the asset there and then sits still */}
+                          {inCart(a.id)
+                            ? <CheckCircle2 size={16} strokeWidth={2.4} className="ams-cart-tick" />
+                            : <ShoppingCart size={16} strokeWidth={1.9} />}
+                        </button>
+                      ) : (
+                        /* the column stays, so the rows above and below it do
+                           not shift; only the control is gone */
+                        <span aria-hidden="true" className="px-3" style={{ width: 40, borderLeft: `1px solid ${C.ruleSoft}` }} />
+                      ))}
+                    </div>
                   );
                 })}
               </div>
             </div>
 
-            <div className={`${current ? "block" : "hidden md:block"} flex-1 min-w-0`}>
+            <div ref={detail} className={`ams-detail ${current ? "block" : "hidden md:block"} flex-1 min-w-0`}>
               {!current ? (
                 <div className="flex items-center justify-center px-6 text-center" style={{ height: 320, border: `1px dashed ${C.rule}`, borderRadius: 2, color: C.mute, fontSize: 14 }}>
                   Select an asset to see its availability, schedules, and custody trail.
@@ -2560,15 +3701,12 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
                       <div>
                         <div style={{ fontFamily: MONO, fontSize: 26, fontWeight: 700, letterSpacing: "0.06em", lineHeight: 1.1 }}>{current.tag}</div>
                         <div style={{ fontSize: 17, marginTop: 2 }}>{current.name}</div>
-                        {current.code && (
-                          <div className="inline-flex items-center gap-2 mt-2 px-2 py-1" style={{ border: `1px solid ${C.rule}`, borderRadius: 2, background: C.soft }}>
-                            <QrCode size={13} style={{ color: C.mute }} />
-                            <span style={{ fontFamily: MONO, fontSize: 12, letterSpacing: "0.08em" }}>{current.code}</span>
-                          </div>
-                        )}
-                        {/* the same code as a code: stick it on the machine and
-                            scanning it opens this asset, for anyone whose access
-                            reaches it */}
+                        {/* The code as a code, and only as a code. It used to
+                            be printed as a chip here as well, directly above
+                            the QR that already carries it and captions it, so
+                            the panel showed the same number twice and read as
+                            two different things. The plain value still has a
+                            place: the Asset code row in the details below. */}
                         {assetScanKey(current) && (
                           <div className="flex items-start gap-3 mt-3">
                             <img src={qrDataUri(assetDeepLink(current), 104)} width={104} height={104}
@@ -2599,14 +3737,24 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
                     )}
                   </div>
 
-                  {/* what the numbers cannot tell you: which machine this is on sight */}
-                  {current.photoUrl && (
-                    <div className="px-5 pb-4">
-                      <Label>Asset image</Label>
-                      <img src={current.photoUrl} alt={`Asset image — ${current.tag} ${current.name}`}
-                        style={{ display: "block", width: "100%", height: 240, objectFit: "contain",
-                          background: C.soft, border: `1px solid ${C.ruleSoft}`, borderRadius: 2 }} />
-                    </div>
+                  {/* what the numbers cannot tell you: which machine this is on sight.
+                      Keyed on the asset so paging through one asset's pictures does
+                      not carry a position over to the next one opened. */}
+                  {(current.images?.length > 0 || current.photoUrl) && (
+                    <AssetImages key={current.id}
+                      images={current.images?.length ? current.images : [{ id: "cover", url: current.photoUrl }]}
+                      alt={`Asset image — ${current.tag} ${current.name}`}
+                      onOpen={(index) => setGallery({
+                        items: imageItems(current.images?.length ? current.images : [{ id: "cover", url: current.photoUrl }], current),
+                        at: index,
+                      })} />
+                  )}
+
+                  {/* the invoice, the registration, the deed - the papers that
+                      say this machine is the company's, kept with the machine */}
+                  {current.files?.length > 0 && (
+                    <AssetDocuments files={current.files}
+                      onOpen={(index) => setGallery({ items: documentItems(current.files), at: index, resolve: getAssetAttachmentUrls })} />
                   )}
 
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-y-4 gap-x-4 px-5 py-4" style={{ borderTop: `1px solid ${C.ruleSoft}`, borderBottom: `1px solid ${C.ruleSoft}`, background: C.soft }}>
@@ -2652,6 +3800,12 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
                   <div className="flex flex-wrap gap-2 px-5 py-4">
                     {current.status === "active" && <>
                       {can("asset.transfer") && <Btn icon={ArrowLeftRight} onClick={() => setDlg({ kind: "asset", name: "transfer" })}>Transfer</Btn>}
+                      {can("asset.transfer") && cartable(current) && (
+                        <Btn icon={inCart(current.id) ? CheckCircle2 : ShoppingCart} iconClass={inCart(current.id) ? "ams-cart-tick" : undefined}
+                          onClick={() => askAddToCart(current)}>
+                          {inCart(current.id) ? "Remove from cart" : "Add to cart"}
+                        </Btn>
+                      )}
                       {can("repair.create") && <Btn icon={AlertTriangle} onClick={() => setDlg({ kind: "repair", name: "open", assetId: current.id })}>Report fault</Btn>}
                       {can("asset.retire") && <Btn icon={Archive} onClick={() => setDlg({ kind: "asset", name: "retire" })}>Retire</Btn>}
                     </>}
@@ -2660,11 +3814,12 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
                     {can("asset.update") && <Btn icon={Pencil} onClick={() => setDlg({ kind: "asset", name: "edit" })}>Edit</Btn>}
                     {/* every sheet this asset has produced: view, print or save */}
                     <Btn icon={FileText} onClick={() => setFormsFor(current)}>Transfer form</Btn>
-                    {can("asset.delete") && <Btn kind="danger" icon={Trash2} onClick={() => setConfirm({
+                    {can(DELETE_PERMISSION) && <Btn kind="danger" icon={Trash2} onClick={() => setConfirm({
                       title: `Delete ${current.tag}?`,
                       body: "This erases the record, its custody trail, repair tickets, and schedules for good. To keep the history instead, retire the asset.",
                       confirm: "Delete permanently",
                       run: async () => {
+                        if (!requirePermission(DELETE_PERMISSION, "deleting an asset")) return;
                         try {
                           const receipts = repairs.filter((repair) => repair.assetId === sel).flatMap((repair) => repair.parts || []).map((part) => part.receipt).filter(Boolean);
                           await runServerMutation(async () => { for (const receipt of receipts) await removeStoredReceipt(receipt); await deleteAsset(sel); }, "Asset permanently deleted.");
@@ -2706,6 +3861,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
             onEdit={(id) => setDlg({ kind: "plan", name: "editPlan", planId: id })}
             onDelete={(p) => setConfirm({ title: `Delete "${p.name}"?`, body: "The schedule and its completed-maintenance records go with it. Costs already recorded will drop out of reports.", confirm: "Delete schedule", run: () => runServerMutation(() => deleteMaintenanceSchedule(p.id), "Maintenance schedule deleted.").catch(() => {}) })}
             canManage={can("maintenance.manage")}
+            canDelete={can(DELETE_PERMISSION)}
             onOpenAsset={(id) => { setTab("assets"); setSel(id); }} />
         )}
 
@@ -2728,7 +3884,8 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
                 return setConfirm(n > 0
                   ? { title: `${item.name} is in use`, body: `${n} asset${n > 1 ? "s are" : " is"} registered as this make. Change them first, or rename this brand instead of deleting it.`, blocked: true }
                   : { title: `Delete ${item.name}?`, body: "Its models go with it. No assets carry this make, so nothing else is affected.", confirm: "Delete brand",
-                      run: () => runServerMutation(() => deleteBrand(id), "Brand removed.").catch(() => {}) });
+                      run: () => requirePermission(DELETE_PERMISSION, "deleting a brand")
+                        && runServerMutation(() => deleteBrand(id), "Brand removed.").catch(() => {}) });
               }
               if (action === "addCategory") return setDlg({ kind: "category", name: "addCategory" });
               if (action === "editCategory") return setDlg({ kind: "category", name: "editCategory", categoryId: id });
@@ -2741,28 +3898,55 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
                 return setConfirm(n > 0
                   ? { title: `${item.name} still holds assets`, body: `${n} asset${n > 1 ? "s are" : " is"} signed out to this person. Transfer them to someone else first.`, blocked: true }
                   : { title: `Remove ${item.name}?`, body: "No assets are signed out to them, so nothing else is affected.", confirm: "Remove person",
-                      run: () => runServerMutation(() => deletePerson(id), "Responsible person removed.").catch(() => {}) });
+                      run: () => requirePermission(DELETE_PERMISSION, "deleting a responsible person")
+                        && runServerMutation(() => deletePerson(id), "Responsible person removed.").catch(() => {}) });
               }
               if (action === "deleteProject") {
                 return setConfirm(n > 0
                   ? { title: `${item.pid} is in use`, body: `${n} asset${n > 1 ? "s are" : " is"} recorded against it. Transfer them elsewhere first.`, blocked: true }
                   : { title: `Delete ${item.pid}?`, body: "No assets are on it, so nothing else is affected.", confirm: "Delete",
-                      run: () => runServerMutation(() => deleteProject(id), "Project/location deleted.").catch(() => {}) });
+                      run: () => requirePermission(DELETE_PERMISSION, "deleting a project/location")
+                        && runServerMutation(() => deleteProject(id), "Project/location deleted.").catch(() => {}) });
               }
               const isCo = action === "deleteCompany";
               const word = isCo ? "company" : "category";
               setConfirm(n > 0
                 ? { title: `${item.name} is in use`, body: `${n} asset${n > 1 ? "s are" : " is"} filed under this ${word}. Move them across first, or rename this one instead of deleting it.`, blocked: true }
                 : { title: `Delete ${item.name}?`, body: `No assets use this ${word}, so nothing else is affected.`, confirm: `Delete ${word}`,
-                    run: () => runServerMutation(() => isCo ? deleteCompany(id) : deleteCategory(id), `${isCo ? "Company" : "Asset group"} deleted.`).catch(() => {}) });
+                    run: () => requirePermission(DELETE_PERMISSION, `deleting a ${word}`)
+                      && runServerMutation(() => isCo ? deleteCompany(id) : deleteCategory(id), `${isCo ? "Company" : "Asset group"} deleted.`).catch(() => {}) });
             }} />
         )}
 
         {/* the asset itself is reached from inside the movement, which is what
             a row opens */}
+        {tab === "cart" && (
+          <TransferCartTab
+            assets={cartAssets}
+            movable={movableCart}
+            statusOf={(asset) => availOf(asset, openJob(asset.id))}
+            onOpen={(id) => { setSel(id); setTab("assets"); }}
+            onRemove={toggleCart}
+            onClear={clearCart}
+            onTransfer={() => setDlg({ kind: "asset", name: "transferCart" })}
+            /* the same sheet the dialog prints, with the destination left
+               ruled and empty: what a yard carries round to collect the
+               machines before anyone has said where they are going */
+            onPrint={() => printTransferForm({
+              company: companies.find((company) => company.name === movableCart[0]?.company) || { name: movableCart[0]?.company || "" },
+              asset: movableCart[0] || {},
+              movement: {
+                date: today(), releasedBy: ctx.userName, number: "",
+                items: movableCart.map((asset) => transferFormItem(asset, { date: today() })),
+              },
+            })}
+          />
+        )}
+
         {tab === "transfers" && (
           <TransfersTab assets={allowedAssets}
             onOpenDetails={(id) => setTransferId(id)}
+            onScan={() => setScanning("transfers")}
             onForm={formActions} />
         )}
 
@@ -2784,13 +3968,21 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
 
       {transferView && (
         <div className="ams-overlay">
-          <TransferDetails view={transferView} busy={saving} canAttach={can("asset.transfer")}
+          <TransferDetails view={transferView} busy={saving} canAttach={can("asset.transfer")} canDetach={can(DELETE_PERMISSION)}
             onClose={() => setTransferId(null)}
             onOpenAsset={(id) => { setTransferId(null); setSel(id); setTab("assets"); }}
             onAttach={attachTransferForm}
             onOpenFile={(file) => setViewer({ meta: file, kind: "transfer" })}
+            onRenameFile={renameTransferForm}
             onDetachFile={detachTransferForm}
             onForm={formActions} />
+        </div>
+      )}
+
+      {scanning && (
+        <div className="ams-overlay">
+          <QrScanner title={scanning === "transfers" ? "Scan a transfer form" : "Scan an asset code"}
+            onResult={followScan} onClose={() => setScanning(null)} />
         </div>
       )}
 
@@ -2837,11 +4029,18 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
         </div>
       )}
 
+      {gallery && <div className="ams-overlay">
+        <MediaGallery items={gallery.items} at={gallery.at} resolve={gallery.resolve} onClose={() => setGallery(null)} />
+      </div>}
+
       {viewer && <div className="ams-overlay"><ReceiptViewer meta={viewer.meta || viewer} onClose={() => setViewer(null)}
-        open={viewer.kind === "transfer" ? getTransferAttachmentUrl : getReceiptUrl}
+        open={viewer.kind === "transfer" ? getTransferAttachmentUrl : viewer.kind === "document" ? getAssetAttachmentUrl : getReceiptUrl}
         removeLabel={viewer.kind === "transfer" ? "Detach form" : "Remove receipt"}
-        canRemove={viewer.kind === "transfer" ? can("asset.transfer") : can("purchasing.manage")}
+        /* a document opened from the edit form is taken off in that form, where
+           the removal is held with the rest of the changes until Save */
+        canRemove={viewer.kind !== "document" && can(DELETE_PERMISSION)}
         onRemove={() => {
+          if (viewer.kind === "document") return setViewer(null);
           if (viewer.kind !== "transfer") return removeReceipt(viewer.jobId, viewer.partId, viewer.meta || viewer);
           const file = viewer.meta;
           setViewer(null);
@@ -2856,8 +4055,8 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
             <div style={{ fontSize: 13.5, color: C.mute, marginTop: 6, lineHeight: 1.5 }}>{confirm.body}</div>
             <div className="flex justify-end gap-2 mt-5">
               {confirm.blocked ? <Btn kind="solid" onClick={() => setConfirm(null)}>Close</Btn> : (<>
-                <Btn onClick={() => setConfirm(null)}>Keep it</Btn>
-                <Btn kind="danger" onClick={() => { confirm.run(); setConfirm(null); }}>{confirm.confirm}</Btn>
+                <Btn onClick={() => setConfirm(null)}>{confirm.cancel || "Keep it"}</Btn>
+                <Btn kind={confirm.kind || "danger"} onClick={() => { confirm.run(); setConfirm(null); }}>{confirm.confirm}</Btn>
               </>)}
             </div>
           </div>
@@ -2893,7 +4092,7 @@ function PartRow({ part: p, job, asset, onAct, onView, onDrop, showTicket, locke
       {p.state === "Needed" && can("purchasing.manage") && <Btn small icon={ShoppingCart} onClick={() => onAct("order", job.id, p.id)}>Mark ordered</Btn>}
       {p.state === "Ordered" && can("purchasing.manage") && <Btn small kind="solid" icon={Receipt} onClick={() => onAct("purchase", job.id, p.id)}>Record purchase</Btn>}
       {p.state === "Purchased" && can("purchasing.manage") && <Btn small icon={Pencil} onClick={() => onAct("purchase", job.id, p.id)}>Edit</Btn>}
-      {onDrop && can("parts.manage") && <Btn small kind="danger" icon={Trash2} onClick={() => onDrop(job.id, p.id, p)}>{""}</Btn>}
+      {onDrop && can(DELETE_PERMISSION) && <Btn small kind="danger" icon={Trash2} onClick={() => onDrop(job.id, p.id, p)}>{""}</Btn>}
       {!can("purchasing.manage") && !can("parts.manage") && <span style={{ fontSize: 12, color: C.mute }}>View only</span>}
     </div>
   );
@@ -3397,6 +4596,24 @@ const movementsOf = (assets) => assets
    without it */
 const projectLabel = (value) => (!value || value === NO_PROJECT ? "—" : value);
 
+/* What the register calls a filed form. A phone hands over names like
+   cf727768-1337-4703-b3dc-44f767a6e3fb.jpg, which says nothing to whoever
+   opens the movement a year later, so the paperwork is named after the
+   movement instead and the person filing it can say otherwise. */
+const nameStem = (name) => String(name || "").replace(/\.[^.]+$/, "");
+const nameExt = (name) => (String(name || "").match(/\.[^.]+$/) || [""])[0].toLowerCase();
+
+const suggestedFormName = (entry, asset, files) => {
+  const base = `${entry.number ? `TR ${entry.number}` : asset.tag || "Transfer"} signed form`;
+  const taken = new Set((files || []).map((file) => nameStem(file.name).toLowerCase()));
+  if (!taken.has(base.toLowerCase())) return base;
+  /* a second photograph of the same sheet is a normal thing to file */
+  for (let n = 2; n < 99; n += 1) {
+    if (!taken.has(`${base} (${n})`.toLowerCase())) return `${base} (${n})`;
+  }
+  return base;
+};
+
 /* One place that turns a movement into the paperwork for it, so the viewer,
    the printer and the download all describe the same sheet. */
 const formDataOf = (entry, asset, companies) => ({
@@ -3521,6 +4738,134 @@ function TransferFormsDialog({ asset, movements, onClose, onView, onPrint, onDow
   );
 }
 
+/* --------------------------- the code reader ---------------------------
+
+   A sticker on a machine, read either through the device's own camera or from
+   a photograph of one. The camera needs a secure page — https, or localhost —
+   so the picture route is always offered beside it rather than as a fallback
+   nobody can find. */
+function QrScanner({ title, onResult, onClose }) {
+  const panel = useRef(null);
+  const video = useRef(null);
+  const canvas = useRef(null);
+  const stream = useRef(null);
+  const timer = useRef(0);
+  const titleId = useId();
+  const [live, setLive] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  useEscapeKey(true, onClose);
+  useDialogFocus(panel);
+
+  const stop = useCallback(() => {
+    if (timer.current) { cancelAnimationFrame(timer.current); timer.current = 0; }
+    if (stream.current) { stream.current.getTracks().forEach((track) => track.stop()); stream.current = null; }
+    setLive(false);
+  }, []);
+
+  /* whatever happens, the camera light goes out when this closes */
+  useEffect(() => stop, [stop]);
+
+  const found = useCallback((text) => { stop(); onResult(text); }, [onResult, stop]);
+
+  const start = async () => {
+    setErr("");
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setErr(window.isSecureContext === false
+        ? "The camera needs a secure page. Open this workspace over https, or scan a picture of the code instead."
+        : "This device offers no camera to this browser. Scan a picture of the code instead.");
+      return;
+    }
+    try {
+      /* the back camera on a phone; a laptop simply gives its only one */
+      const media = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+      stream.current = media;
+      setLive(true);
+      const element = video.current;
+      element.srcObject = media;
+      await element.play();
+      const frame = canvas.current;
+      const context = frame.getContext("2d", { willReadFrequently: true });
+      const look = () => {
+        if (!stream.current) return;
+        if (element.readyState >= 2 && element.videoWidth) {
+          frame.width = element.videoWidth;
+          frame.height = element.videoHeight;
+          context.drawImage(element, 0, 0, frame.width, frame.height);
+          const text = decodeFromCanvas(frame, context);
+          if (text) return found(text);
+        }
+        timer.current = requestAnimationFrame(look);
+      };
+      timer.current = requestAnimationFrame(look);
+    } catch (error) {
+      stop();
+      setErr(error?.name === "NotAllowedError"
+        ? "The camera was blocked. Allow camera access for this site, or scan a picture of the code instead."
+        : error?.message || "The camera could not be opened. Scan a picture of the code instead.");
+    }
+  };
+
+  const pick = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setErr(""); setBusy(true);
+    try {
+      const text = await decodeFromFile(file);
+      if (text) found(text);
+      else setErr("No QR code was found in that picture. Try a closer, sharper shot of the code.");
+    } catch {
+      setErr("That file could not be read as an image.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6" style={{ background: "rgba(25,28,39,0.45)" }}>
+      <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
+        className="w-full flex flex-col" style={{ maxWidth: 460, background: C.surface, borderRadius: 2, outline: "none" }}>
+        <div className="flex items-start justify-between gap-3 px-5 py-4" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
+          <div>
+            <div id={titleId} style={{ fontSize: 16, fontWeight: 600 }}>{title}</div>
+            <div style={{ fontSize: 13, color: C.mute, marginTop: 2 }}>Point the camera at the code, or scan a picture of one.</div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ color: C.mute }} className="p-1 hover:opacity-60"><X size={18} /></button>
+        </div>
+
+        <div className="px-5 py-4">
+          <div style={{ position: "relative", background: C.paper, border: `1px solid ${C.ruleSoft}`, aspectRatio: "4 / 3", overflow: "hidden" }}>
+            <video ref={video} muted playsInline
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: live ? "block" : "none" }} />
+            {!live && (
+              <div className="absolute inset-0 grid place-items-center px-6 text-center" style={{ fontSize: 13, color: C.mute }}>
+                <div><QrCode size={26} style={{ margin: "0 auto 8px" }} />The camera is off.</div>
+              </div>
+            )}
+            <canvas ref={canvas} className="hidden" />
+          </div>
+          {err && <div className="mt-3 px-3 py-2" style={{ background: STAGES.broken.tint, color: STAGES.broken.color, fontSize: 12.5, lineHeight: 1.45 }}>{err}</div>}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 px-5 py-3" style={{ borderTop: `1px solid ${C.ruleSoft}` }}>
+          {live
+            ? <Btn icon={X} onClick={stop}>Stop camera</Btn>
+            : <Btn kind="solid" icon={QrCode} onClick={start}>Use camera</Btn>}
+          {/* a file picker has to be a label, so it borrows the button's shape */}
+          <label className="inline-flex items-center gap-2 transition-opacity hover:opacity-75"
+            style={{ background: C.surface, color: C.ink, border: `1px solid ${C.rule}`, minHeight: 40, borderRadius: 10,
+              fontFamily: SANS, fontSize: 13, fontWeight: 700, padding: "0 13px", whiteSpace: "nowrap",
+              cursor: busy ? "wait" : "pointer", opacity: busy ? 0.6 : 1 }}>
+            <input type="file" accept="image/*" className="hidden" onChange={pick} disabled={busy} />
+            <Upload size={14} strokeWidth={2} />{busy ? "Reading…" : "Scan a picture"}
+          </label>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* one leg of a movement: what it was, and what it became */
 const Fact = ({ label, from, to, mono }) => (
   <div>
@@ -3538,20 +4883,56 @@ const Fact = ({ label, from, to, mono }) => (
    Where a scanned form lands. The movement is already recorded; what is
    missing is the paper that was signed for it on delivery, so filing that is
    the one thing this panel can do that the register cannot do elsewhere. */
-function TransferDetails({ view, canAttach, busy, onClose, onForm, onOpenAsset, onAttach, onOpenFile, onDetachFile }) {
+function TransferDetails({ view, canAttach, canDetach, busy, onClose, onForm, onOpenAsset, onAttach, onOpenFile, onRenameFile, onDetachFile }) {
   const panel = useRef(null);
   const titleId = useId();
+  const nameId = useId();
+  const noteId = useId();
   const fileRef = useRef(null);
+  /* the chosen file waits here until it is filed, so the name and note beside
+     it are plainly about that file rather than fields on their own */
+  const [staged, setStaged] = useState(null);
+  const [preparing, setPreparing] = useState(false);
+  const [formName, setFormName] = useState("");
   const [note, setNote] = useState("");
+  /* { id, stem } while one filed row is being renamed in place */
+  const [renaming, setRenaming] = useState(null);
   useEscapeKey(true, onClose);
   useDialogFocus(panel);
 
   const { entry, asset } = view;
   const files = entry.files || [];
-  const pick = (event) => {
-    const file = event.target.files?.[0];
+
+  const pick = async (event) => {
+    const chosen = event.target.files?.[0];
     event.target.value = "";
-    if (file) { onAttach(file, note.trim()); setNote(""); }
+    if (!chosen) return;
+    setPreparing(true);
+    /* shrinking a phone photograph here is what makes the upload quick; a file
+       that cannot be shrunk simply comes back as it was */
+    const prepared = await prepareUpload(chosen).catch(() => ({ file: chosen, original: chosen, shrunk: false }));
+    setPreparing(false);
+    setStaged(prepared);
+    setFormName(suggestedFormName(entry, asset, files));
+  };
+
+  const discard = () => { setStaged(null); setFormName(""); setNote(""); };
+
+  const fileIt = async () => {
+    if (!staged) return;
+    const stem = formName.trim() || nameStem(staged.original.name);
+    /* the extension follows the file actually being sent, which a shrunk
+       photograph has changed to .jpg */
+    const filed = await onAttach(staged.file, { name: `${stem}${nameExt(staged.file.name)}`, note: note.trim() });
+    /* only cleared once the server has it, so a failed upload keeps the typing */
+    if (filed) discard();
+  };
+
+  const commitRename = async (file) => {
+    const stem = (renaming?.stem || "").trim();
+    if (!stem) return;
+    if (stem === nameStem(file.name)) { setRenaming(null); return; }
+    if (await onRenameFile(file, `${stem}${nameExt(file.name)}`)) setRenaming(null);
   };
 
   return (
@@ -3607,18 +4988,45 @@ function TransferDetails({ view, canAttach, busy, onClose, onForm, onOpenAsset, 
                 {files.map((file) => (
                   <div key={file.id} className="flex items-center gap-3 px-3 py-2" style={{ background: C.paper, border: `1px solid ${C.ruleSoft}` }}>
                     <Paperclip size={14} style={{ color: C.mute, flexShrink: 0 }} />
-                    <button type="button" onClick={() => onOpenFile(file)} className="text-left flex-1 min-w-0">
-                      <div className="truncate" style={{ fontSize: 13 }}>{file.name}</div>
-                      <div style={{ fontFamily: MONO, fontSize: 11, color: C.mute }}>
-                        {kb(file.size)} · filed {fmt(file.at)} by {file.by || "unknown"}{file.note ? ` · ${file.note}` : ""}
-                      </div>
-                    </button>
-                    {canAttach && (
-                      <button type="button" onClick={() => onDetachFile(file)} disabled={busy}
-                        title="Detach this form" aria-label={`Detach ${file.name}`}
-                        className="p-1.5" style={{ color: C.mute, border: `1px solid ${C.rule}`, borderRadius: 6 }}>
-                        <Trash2 size={14} />
-                      </button>
+                    {renaming?.id === file.id ? (
+                      <>
+                        <input value={renaming.stem} autoFocus disabled={busy}
+                          onChange={(event) => setRenaming({ id: file.id, stem: event.target.value })}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") commitRename(file);
+                            /* the panel closes on Escape, which is not what a
+                               half-typed name means */
+                            if (event.key === "Escape") { event.stopPropagation(); setRenaming(null); }
+                          }}
+                          aria-label="Name for this filed form"
+                          style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
+                        <span style={{ fontFamily: MONO, fontSize: 11, color: C.mute }}>{nameExt(file.name)}</span>
+                        <Btn small onClick={() => commitRename(file)} disabled={busy}>Save</Btn>
+                        <Btn small onClick={() => setRenaming(null)} disabled={busy}>Cancel</Btn>
+                      </>
+                    ) : (
+                      <>
+                        <button type="button" onClick={() => onOpenFile(file)} className="text-left flex-1 min-w-0">
+                          <div className="truncate" style={{ fontSize: 13 }}>{file.name}</div>
+                          <div style={{ fontFamily: MONO, fontSize: 11, color: C.mute }}>
+                            {kb(file.size)} · filed {fmt(file.at)} by {file.by || "unknown"}{file.note ? ` · ${file.note}` : ""}
+                          </div>
+                        </button>
+                        {canAttach && (
+                          <button type="button" onClick={() => setRenaming({ id: file.id, stem: nameStem(file.name) })} disabled={busy}
+                            title="Rename this form" aria-label={`Rename ${file.name}`}
+                            className="p-1.5" style={{ color: C.mute, border: `1px solid ${C.rule}`, borderRadius: 6 }}>
+                            <Pencil size={14} />
+                          </button>
+                        )}
+                        {canDetach && (
+                          <button type="button" onClick={() => onDetachFile(file)} disabled={busy}
+                            title="Detach this form" aria-label={`Detach ${file.name}`}
+                            className="p-1.5" style={{ color: C.mute, border: `1px solid ${C.rule}`, borderRadius: 6 }}>
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                 ))}
@@ -3627,12 +5035,52 @@ function TransferDetails({ view, canAttach, busy, onClose, onForm, onOpenAsset, 
 
             {canAttach && (
               <div className="mt-3">
-                <input value={note} onChange={(event) => setNote(event.target.value)}
-                  placeholder="Note (optional) — e.g. signed copy returned by site" style={{ ...inputStyle, marginBottom: 8 }} />
                 <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif,application/pdf"
                   className="hidden" onChange={pick} />
-                <Btn icon={Upload} onClick={() => fileRef.current?.click()} disabled={busy}>Attach signed form</Btn>
-                <span style={{ fontSize: 12, color: C.mute, marginLeft: 10 }}>Photo or PDF, up to 10 MB.</span>
+                {staged ? (
+                  <div className="p-3" style={{ background: C.paper, border: `1px solid ${C.rule}` }}>
+                    <div className="flex items-center gap-3">
+                      <Paperclip size={14} style={{ color: C.mute, flexShrink: 0 }} />
+                      {/* the picked file, named as it came, only so the right
+                          one can be confirmed before it is filed */}
+                      <div className="truncate min-w-0 flex-1" style={{ fontFamily: MONO, fontSize: 11, color: C.mute }}>
+                        {staged.original.name} · {staged.shrunk
+                          ? `${kb(staged.original.size)} → ${kb(staged.file.size)} · compressed for a faster upload`
+                          : kb(staged.file.size)}
+                      </div>
+                      <button type="button" onClick={() => fileRef.current?.click()} disabled={busy}
+                        className="underline" style={{ fontSize: 12, color: C.mute, flexShrink: 0 }}>Change</button>
+                    </div>
+                    <label htmlFor={nameId} style={{ display: "block", fontSize: 12.5, color: C.mute, margin: "12px 0 4px" }}>
+                      File name — what this form is called in the register
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input id={nameId} value={formName} autoFocus disabled={busy}
+                        onChange={(event) => setFormName(event.target.value)}
+                        placeholder={nameStem(staged.original.name)} style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
+                      <span style={{ fontFamily: MONO, fontSize: 12, color: C.mute }}>{nameExt(staged.file.name)}</span>
+                    </div>
+                    <label htmlFor={noteId} style={{ display: "block", fontSize: 12.5, color: C.mute, margin: "12px 0 4px" }}>
+                      Note about this file (optional) — filed with it and shown in the list below
+                    </label>
+                    <input id={noteId} value={note} disabled={busy}
+                      onChange={(event) => setNote(event.target.value)}
+                      placeholder="e.g. signed copy returned by site" style={inputStyle} />
+                    <div className="flex items-center gap-2" style={{ marginTop: 12 }}>
+                      <Btn kind="solid" icon={Upload} onClick={fileIt} disabled={busy}>{busy ? "Filing…" : "File it"}</Btn>
+                      <Btn small onClick={discard} disabled={busy}>Cancel</Btn>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <Btn icon={Upload} onClick={() => fileRef.current?.click()} disabled={busy || preparing}>
+                      {preparing ? "Preparing…" : "Choose signed form"}
+                    </Btn>
+                    <span style={{ fontSize: 12, color: C.mute, marginLeft: 10 }}>
+                      Photo or PDF, up to 10 MB. You add the note on the next step.
+                    </span>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -3650,7 +5098,106 @@ function TransferDetails({ view, canAttach, busy, onClose, onForm, onOpenAsset, 
   );
 }
 
-function TransfersTab({ assets, onOpenDetails, onForm }) {
+/* ---------------------------- the transfer cart ---------------------------
+
+   Assets picked out of the register and held until somebody says where they
+   are going. Nothing here is a record of anything: the cart holds the decision
+   to move something, and the register stays the truth about what each asset
+   is. The point of it is the single sheet at the end — a yard moving eight
+   machines to one site signs for them once, on one form, rather than eight
+   times on eight.                                                          */
+function TransferCartTab({ assets, movable, statusOf, onOpen, onRemove, onClear, onTransfer, onPrint }) {
+  /* the printed sheet carries one letterhead, so a cart drawn from two
+     companies cannot be run off as one piece of paper truthfully */
+  const companies = [...new Set(assets.map((asset) => asset.company).filter(Boolean))];
+  /* an asset can go on a repair ticket after it was put in the cart, so being
+     here is not proof it can still move */
+  const movableIds = new Set(movable.map((asset) => asset.id));
+  const stuck = assets.filter((asset) => !movableIds.has(asset.id));
+
+  return (
+    <div className="ams-table-frame overflow-hidden" style={{ background: C.surface }}>
+      <div className="px-5 py-4 flex flex-wrap items-start justify-between gap-3" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
+        <div>
+          <div className="flex items-center gap-2" style={{ fontSize: 16, fontWeight: 600 }}>
+            <ShoppingCart size={17} style={{ color: C.mute }} />Transfer cart
+            <span style={{ fontFamily: MONO, fontSize: 12, color: C.mute }}>{assets.length}</span>
+          </div>
+          <div style={{ fontSize: 13, color: C.mute, marginTop: 2 }}>
+            Assets waiting to move. They all go to the same address and responsible person, and print on one form.
+          </div>
+        </div>
+        {assets.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Btn small icon={Printer} onClick={onPrint}>Print list</Btn>
+            <Btn small icon={X} onClick={onClear}>Clear cart</Btn>
+            <Btn kind="solid" icon={ArrowLeftRight} onClick={onTransfer} disabled={movable.length === 0}>Transfer from cart</Btn>
+          </div>
+        )}
+      </div>
+
+      {assets.length === 0 ? (
+        <div className="px-5 py-14 text-center">
+          <ShoppingCart size={26} style={{ color: C.dim, margin: "0 auto 10px" }} />
+          <div style={{ fontSize: 14, marginBottom: 4 }}>The cart is empty.</div>
+          <div style={{ fontSize: 13, color: C.mute, lineHeight: 1.5 }}>
+            Add assets from the Assets tab — the <ShoppingCart size={13} style={{ display: "inline", verticalAlign: -2 }} /> beside a row,
+            or the button on the asset itself. Assets on a repair ticket do not offer it, because they are not the yard's to move.
+          </div>
+        </div>
+      ) : (
+        <>
+          {stuck.length > 0 && (
+            <div className="flex items-start gap-2 px-5 py-3" style={{ background: STAGES.parts.tint, color: STAGES.parts.color, fontSize: 13, lineHeight: 1.45 }}>
+              <AlertTriangle size={14} style={{ marginTop: 2, flexShrink: 0 }} />
+              <span>
+                {stuck.length === 1 ? "One asset here cannot move" : `${stuck.length} assets here cannot move`} — {stuck.map((asset) => asset.tag).join(", ")}
+                {" "}went on a repair ticket after being added. They are left out of the transfer.
+              </span>
+            </div>
+          )}
+          {companies.length > 1 && (
+            <div className="flex items-start gap-2 px-5 py-3" style={{ background: STAGES.broken.tint, color: STAGES.broken.color, fontSize: 13, lineHeight: 1.45 }}>
+              <AlertTriangle size={14} style={{ marginTop: 2, flexShrink: 0 }} />
+              <span>The cart holds assets from {companies.join(" and ")}. One printed form carries one company's letterhead, so file these as separate movements if the paperwork has to match.</span>
+            </div>
+          )}
+          {assets.map((asset) => {
+            const state = statusOf(asset);
+            return (
+              <div key={asset.id} className="ams-list-row flex items-stretch" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
+                <button type="button" onClick={() => onOpen(asset.id)} className="min-w-0 flex-1 text-left px-5 py-3 flex gap-3 items-center">
+                  <Dot color={state.color} />
+                  {asset.photoUrl ? (
+                    <img src={asset.photoUrl} alt="" style={{ width: 38, height: 38, flexShrink: 0, objectFit: "cover", borderRadius: 2, border: `1px solid ${C.ruleSoft}`, background: C.soft }} />
+                  ) : (
+                    <span aria-hidden="true" style={{ width: 38, height: 38, flexShrink: 0, display: "grid", placeItems: "center", borderRadius: 2, border: `1px solid ${C.ruleSoft}`, background: C.soft }}>
+                      <Package size={15} style={{ color: C.dim }} />
+                    </span>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="uppercase" style={{ fontFamily: MONO, fontSize: 11, letterSpacing: "0.1em", color: state.color }}>{asset.tag}</div>
+                    <div className="truncate" style={{ fontSize: 14, fontWeight: 500 }}>{asset.name}</div>
+                    <div className="truncate" style={{ fontFamily: MONO, fontSize: 11, color: C.mute }}>{cartLine(asset)}</div>
+                    <div className="truncate" style={{ fontSize: 12, color: C.mute }}>Held by {asset.custodian || "—"}</div>
+                  </div>
+                  <Chip color={state.color} tint={state.tint}>{state.label}</Chip>
+                </button>
+                <button type="button" onClick={() => onRemove(asset.id)}
+                  title={`Remove ${asset.tag} from the cart`} aria-label={`Remove ${asset.tag} from the cart`}
+                  className="px-4 flex items-center hover:opacity-70" style={{ color: C.mute, borderLeft: `1px solid ${C.ruleSoft}` }}>
+                  <X size={16} />
+                </button>
+              </div>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+}
+
+function TransfersTab({ assets, onOpenDetails, onForm, onScan }) {
   const [q, setQ] = useState("");
   const all = useMemo(() => movementsOf(assets), [assets]);
   const t = q.trim().toLowerCase();
@@ -3678,6 +5225,7 @@ function TransfersTab({ assets, onOpenDetails, onForm }) {
         <input value={q} onChange={(e) => setQ(e.target.value)}
           placeholder="Search TR no., asset, person, address, project or reason" style={{ ...inputStyle, paddingLeft: 32 }} />
       </div>
+      <Btn icon={QrCode} onClick={onScan}>Scan</Btn>
     </div>
 
     <div className="ams-table-frame overflow-x-auto" style={{ background: C.surface }}>
@@ -4215,7 +5763,7 @@ function RepairDetail({ job, asset, history = [], onBack, onAct, onPartAct, onVi
 
 /* --------------------------- maintenance --------------------------- */
 
-function MaintenanceTab({ plans, assets, onAdd, onLog, onEdit, onDelete, onOpenAsset, canManage = false }) {
+function MaintenanceTab({ plans, assets, onAdd, onLog, onEdit, onDelete, onOpenAsset, canManage = false, canDelete = false }) {
   const [scope, setScope] = useState("30");
   const [open, setOpen] = useState(null);
   const aOf = (p) => assets.find((a) => a.id === p.assetId) || {};
@@ -4270,7 +5818,7 @@ function MaintenanceTab({ plans, assets, onAdd, onLog, onEdit, onDelete, onOpenA
               {canManage && <div className="flex gap-2">
                 <Btn small kind="solid" icon={CalendarCheck} onClick={() => onLog(p.id)}>Log done</Btn>
                 <Btn small icon={Pencil} onClick={() => onEdit(p.id)}>{""}</Btn>
-                <Btn small kind="danger" icon={Trash2} onClick={() => onDelete(p)}>{""}</Btn>
+                {canDelete && <Btn small kind="danger" icon={Trash2} onClick={() => onDelete(p)}>{""}</Btn>}
               </div>}
               <button onClick={() => setOpen(isOpen ? null : p.id)} style={{ fontSize: 12.5, color: C.mute }} className="flex items-center gap-1">
                 {done.length} done · {money0(planSpend(p))}<ChevronRight size={13} style={{ transform: isOpen ? "rotate(90deg)" : "none" }} />
