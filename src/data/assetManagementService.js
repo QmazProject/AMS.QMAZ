@@ -4,7 +4,49 @@ const RECEIPT_BUCKET = 'asset-receipts'
 const TRANSFER_BUCKET = 'transfer-forms'
 const PHOTO_BUCKET = 'asset-photos'
 const DOC_BUCKET = 'asset-documents'
+const MAINT_BUCKET = 'maintenance-attachments'
 const LOGO_BUCKET = 'company-logos'
+
+/* How the register writes the numbers it issues. The width of the start the
+   admin typed is the padding: 000001 means six digits, 1 means none. The
+   defaults are what the register does when the preference has never been
+   saved, so a database without the migration still loads and reads the same. */
+export const SEQUENCE_DEFAULT = Object.freeze({ start: 1, end: 999999999999999, width: 1 })
+/* The shape of a number the register issued itself, as asset_number_value on
+   the server reads it: AST- and up to fifteen digits, any case, any width.
+   Only numbers in this shape can be rewritten when the sequence changes. */
+export const SYSTEM_ASSET_NUMBER = /^AST-[0-9]{1,15}$/i
+export const isSystemAssetNumber = (tag) => SYSTEM_ASSET_NUMBER.test(String(tag ?? '').trim())
+/* The tags on a loaded register that the sequence change would have to leave
+   behind: how many, and up to five of them by name. The server runs the same
+   scan before it writes anything; this only tells the admin sooner. */
+export function unsupportedAssetNumbers(assets, sample = 5) {
+  const tags = (assets || []).map((asset) => String(asset?.tag ?? '').trim()).filter((tag) => tag && !isSystemAssetNumber(tag))
+  return { count: tags.length, examples: [...new Set(tags)].sort((a, b) => a.localeCompare(b)).slice(0, sample) }
+}
+export const formatSequenceNumber = (value, sequence) => {
+  if (value === null || value === undefined || value === '') return ''
+  const text = String(value)
+  return text.padStart(Math.max(1, Number(sequence?.width) || 1), '0')
+}
+/* Why a typed start and end cannot be saved, or an empty string when they can.
+   The server checks the same things; this only spares a round trip. */
+export function sequenceProblem(start, end) {
+  const startText = String(start ?? '').trim()
+  const endText = String(end ?? '').trim()
+  if (!/^[0-9]{1,15}$/.test(startText)) return 'The start must be digits only, up to 15 of them, e.g. 000001.'
+  if (!/^[0-9]{1,15}$/.test(endText)) return 'The end must be digits only, up to 15 of them, e.g. 999999.'
+  if (Number.parseInt(startText, 10) < 1) return 'The start of the sequence must be 1 or higher.'
+  if (Number.parseInt(endText, 10) < Number.parseInt(startText, 10)) return 'The end of the sequence must not be lower than its start.'
+  return ''
+}
+const numberingFromRows = (rows) => {
+  const numbering = { asset: { ...SEQUENCE_DEFAULT }, transfer: { ...SEQUENCE_DEFAULT } }
+  ;(rows || []).forEach((row) => {
+    if (row.kind in numbering) numbering[row.kind] = { start: Number(row.start_value), end: Number(row.end_value), width: Number(row.pad_width) || 1 }
+  })
+  return numbering
+}
 const NO_PROJECT = 'X'
 
 const COLUMNS = {
@@ -17,6 +59,7 @@ const COLUMNS = {
   models: 'id,brand_id,name,notes',
   transferAttachments: 'id,transfer_id,storage_bucket,storage_object_path,original_filename,mime_type,size_bytes,note,uploaded_by_name,created_at',
   assetAttachments: 'id,asset_id,storage_bucket,storage_object_path,original_filename,doc_type,mime_type,size_bytes,note,created_at',
+  maintenanceAttachments: 'id,record_id,storage_bucket,storage_object_path,original_filename,mime_type,size_bytes,note,uploaded_by_name,created_at',
   assetImages: 'id,asset_id,storage_bucket,storage_object_path,position,created_at',
   transfers: 'id,asset_id,transfer_number,recorded_by_name,from_project_location_id,to_project_location_id,from_address,to_address,from_custodian,to_custodian,effective_on,reason,reference,created_at',
   repairs: 'id,ticket_number,asset_id,stage,outcome,fault,reported_by_name,service_provider,hold_address,reported_on,target_completion_on,technician_name,started_on,work_done,repair_completed_on,test_result,labor_cost,other_cost,return_address,returned_to_name,closed_on,closure_reason',
@@ -24,6 +67,7 @@ const COLUMNS = {
   receipts: 'id,repair_part_id,storage_bucket,storage_object_path,original_filename,mime_type,size_bytes,receipt_number,receipt_date,removed_at,created_at',
   schedules: 'id,asset_id,name,repeat_every,interval_unit,next_due_on,last_completed_on,service_provider,estimated_cost,notes',
   completions: 'id,maintenance_schedule_id,completed_on,cost,service_provider,reference,notes,next_due_on,created_at',
+  maintenanceRecords: 'id,asset_id,maintenance_type,ero_code,repair_place,started_on,assigned_to,location,failure_cause,mileage_hours,repaired_by,repair_hours,pm_hours,parts,contractor_vendor,contractor_address,finished_on,parts_total,labor_total,completed_on,downtime,mechanic_operator,assistant_supervisor,supervisor,department_head,remarks,created_at,updated_at',
   activity: 'id,asset_id,repair_ticket_id,transfer_id,event_type,event_date,title,details,metadata,created_at',
 }
 
@@ -71,7 +115,7 @@ const mapActivity = (row) => ({
   sub: row.details || '', ticket: row.metadata?.ticket_number, metadata: row.metadata || {},
 })
 
-function mapTransfer(row, projectById) {
+function mapTransfer(row, projectById, transferSequence) {
   const registration = !row.from_address && !row.from_custodian && !row.from_project_location_id
   const fromProject = projectById.get(row.from_project_location_id)?.project_code || NO_PROJECT
   const toProject = projectById.get(row.to_project_location_id)?.project_code || NO_PROJECT
@@ -83,7 +127,7 @@ function mapTransfer(row, projectById) {
     id: row.id, ts: epoch(row.created_at), date: row.effective_on, kind: registration ? 'register' : 'transfer',
     /* assigned by the database when the movement was recorded, so everyone
        reads the same number off the same movement */
-    number: row.transfer_number ?? null,
+    number: row.transfer_number === null || row.transfer_number === undefined ? null : formatSequenceNumber(row.transfer_number, transferSequence),
     /* the account that processed it, stamped on the row when it was written */
     recordedBy: row.recorded_by_name || '',
     text: registration ? `Registered at ${row.to_address}, under ${row.to_custodian}` : pieces.join(' · ') || 'Transfer recorded',
@@ -120,6 +164,16 @@ const assetAttachmentFromRow = (row) => ({
   label: row.original_filename, docType: row.doc_type, type: row.mime_type,
   size: Number(row.size_bytes), note: row.note || '',
   at: String(row.created_at).slice(0, 10),
+})
+
+/* A file kept with a historic maintenance record: a quotation, an invoice, a
+   photo of the failed part. For the record only - the ERO sheet never reads
+   these. Same shape whether it came from a full load or was just filed. */
+const maintenanceAttachmentFromRow = (row) => ({
+  id: row.id, recordId: row.record_id, bucket: row.storage_bucket, path: row.storage_object_path,
+  name: row.original_filename, type: row.mime_type, size: Number(row.size_bytes), note: row.note || '',
+  at: String(row.created_at).slice(0, 10),
+  by: row.uploaded_by_name || '',
 })
 
 export async function loadOperationalData() {
@@ -163,7 +217,32 @@ export async function loadOperationalData() {
   const imageRequest = optionalRows(
     client.from('asset_images').select(COLUMNS.assetImages).is('removed_at', null).order('position').order('created_at'),
   )
-  const [results, documentRows, imageRows] = await Promise.all([Promise.all(requests), documentRequest, imageRequest])
+  /* the numbering preference and the transfer preview arrived later still;
+     without them the register reads exactly as it did before they existed */
+  const numberingRequest = optionalRows(client.from('numbering_sequences').select('kind,start_value,end_value,pad_width'))
+  const nextTransferRequest = client.rpc('next_transfer_number').then(
+    (result) => (result.error || result.data === null || result.data === undefined ? null : Number(result.data)),
+    () => null,
+  )
+  /* historic maintenance: newest job first, the way the Historic tab lists it */
+  /* every column rather than the list, so a register whose table predates a
+     later column (repair_place arrived after the table did) still loads its
+     history instead of a 400 that reads as "the records are gone" */
+  const recordRequest = optionalRows(
+    client.from('maintenance_records').select('*').order('started_on', { ascending: false }).order('created_at', { ascending: false }),
+  )
+  /* the files kept with those records, oldest first as they were filed; a
+     register that has not run that migration yet simply has none */
+  const historyFileRequest = optionalRows(
+    client.from('maintenance_record_attachments').select(COLUMNS.maintenanceAttachments).is('removed_at', null).order('created_at'),
+  )
+  const [results, documentRows, imageRows, numberingRows, nextTransfer, recordRows, historyFileRows] = await Promise.all([Promise.all(requests), documentRequest, imageRequest, numberingRequest, nextTransferRequest, recordRequest, historyFileRequest])
+  const filesByRecord = new Map()
+  historyFileRows.forEach((row) => {
+    filesByRecord.set(row.record_id, [...(filesByRecord.get(row.record_id) || []), maintenanceAttachmentFromRow(row)])
+  })
+  const maintenanceRecords = recordRows.map((row) => ({ ...maintenanceRecordFromRow(row), files: filesByRecord.get(row.id) || [] }))
+  const numbering = numberingFromRows(numberingRows)
   const labels = ['companies', 'asset groups', 'projects/locations', 'assets', 'transfers', 'repairs', 'parts', 'receipts', 'maintenance schedules', 'maintenance history', 'activity history', 'responsible persons', 'responsible person companies', 'transfer attachments', 'brands', 'models']
   results.forEach((result, index) => resultData(result, `Could not load ${labels[index]}`))
   const [companyRows, categoryRows, projectRows, assetRows, transferRows, repairRows, partRows, receiptRows, scheduleRows, completionRows, activityRows, personRows, personCompanyRows, attachmentRows, brandRows, modelRows] = results.map((result) => result.data || [])
@@ -212,7 +291,7 @@ export async function loadOperationalData() {
   })
   transferRows.forEach((row) => activityByAsset.set(row.asset_id, [
     ...(activityByAsset.get(row.asset_id) || []),
-    { ...mapTransfer(row, projectById), files: filesByTransfer.get(row.id) || [] },
+    { ...mapTransfer(row, projectById, numbering.transfer), files: filesByTransfer.get(row.id) || [] },
   ]))
   const picturesByAsset = new Map()
   imageRows.forEach((row) => {
@@ -228,7 +307,7 @@ export async function loadOperationalData() {
   }]))
   const partsByRepair = new Map()
   partRows.forEach((row) => {
-    const part = { id: row.id, name: row.name, state: stateToUi(row.state), qty: row.quantity, unit: row.unit_price ?? row.estimated_amount ?? '', estimated: row.estimated_amount ?? '', supplier: row.supplier || '', date: row.purchased_on || row.ordered_on || row.needed_on, ref: row.order_reference || '', receipt: receiptsByPart.get(row.id) || null }
+    const part = { id: row.id, name: row.name, state: stateToUi(row.state), qty: row.quantity, unit: row.unit_price ?? (row.estimated_amount === null || row.estimated_amount === undefined ? '' : Number(row.estimated_amount) / (Number(row.quantity) || 1)), estimated: row.estimated_amount ?? '', supplier: row.supplier || '', date: row.purchased_on || row.ordered_on || row.needed_on, ref: row.order_reference || '', receipt: receiptsByPart.get(row.id) || null }
     partsByRepair.set(row.repair_ticket_id, [...(partsByRepair.get(row.repair_ticket_id) || []), part])
   })
   const completionBySchedule = new Map()
@@ -264,7 +343,7 @@ export async function loadOperationalData() {
     returnAddress: row.return_address || '', returnedTo: row.returned_to_name || '', closed: row.stage === 'closed', closedOn: row.closed_on || '', closureReason: row.closure_reason || '', parts: partsByRepair.get(row.id) || [], log: activityByRepair.get(row.id) || [],
   }))
   const plans = scheduleRows.map((row) => ({ id: row.id, assetId: row.asset_id, name: row.name, every: row.repeat_every, unit: row.interval_unit, nextDue: row.next_due_on, lastDone: row.last_completed_on || '', provider: row.service_provider || '', estCost: row.estimated_cost ?? '', notes: row.notes || '', done: completionBySchedule.get(row.id) || [] }))
-  return { assets, repairs, plans, companies, categories, projects, people, brands, nextTag: await nextTagRequest }
+  return { assets, repairs, plans, companies, categories, projects, people, brands, numbering, nextTransfer, maintenanceRecords, nextTag: await nextTagRequest }
 }
 
 const assetPayload = (value) => ({
@@ -366,6 +445,74 @@ export const createMaintenanceSchedule = async (assetId, value) => resultData(aw
 export const updateMaintenanceSchedule = async (id, value) => resultData(await db().from('maintenance_schedules').update({ name: value.name.trim(), repeat_every: Number.parseInt(value.every, 10) || 1, interval_unit: value.unit, next_due_on: value.nextDue, service_provider: optional(value.provider), estimated_cost: numberOrNull(value.estCost), notes: optional(value.notes) }).eq('id', id).select('id').single(), 'Could not update maintenance schedule')
 export const completeMaintenance = async (id, value) => resultData(await db().from('maintenance_completions').insert({ maintenance_schedule_id: id, completed_on: value.date, cost: numberOrNull(value.cost) || 0, service_provider: optional(value.provider), reference: optional(value.ref), notes: optional(value.notes), next_due_on: value.nextDue }).select('id').single(), 'Could not record maintenance completion')
 export const deleteMaintenanceSchedule = async (id) => resultData(await db().from('maintenance_schedules').delete().eq('id', id).select('id').single(), 'Could not delete maintenance schedule')
+
+/* Historic maintenance: one repair or P.M. job written up against an asset.
+   The row is read into the shape the Historic form edits, and written back
+   from it; parts lines travel as a JSON list, blank lines dropped. */
+export const MAINTENANCE_RECORD_TYPES = Object.freeze([
+  { value: 'repair', label: 'Repair' },
+  { value: 'pms', label: 'Preventive Maintenance Schedule (PMS)' },
+])
+/* the three cells of the paper's CODE row, offered as suggestions; the field
+   itself is free text */
+export const REPAIR_PLACES = Object.freeze(['Field', 'Yard', 'Contracted outside'])
+export const maintenanceRecordTypeLabel = (value) => MAINTENANCE_RECORD_TYPES.find((type) => type.value === value)?.label || value || ''
+const blankPartLine = () => ({ qty: '', partNo: '', description: '', unitCost: '', amount: '' })
+const partLinesFromJson = (value) => (Array.isArray(value) ? value : []).map((line) => ({
+  qty: String(line?.qty ?? ''), partNo: String(line?.partNo ?? ''), description: String(line?.description ?? ''),
+  unitCost: String(line?.unitCost ?? ''), amount: String(line?.amount ?? ''),
+}))
+const partLinesToJson = (lines) => (Array.isArray(lines) ? lines : [])
+  .map((line) => ({ qty: String(line?.qty ?? '').trim(), partNo: String(line?.partNo ?? '').trim(), description: String(line?.description ?? '').trim(), unitCost: String(line?.unitCost ?? '').trim(), amount: String(line?.amount ?? '').trim() }))
+  .filter((line) => Object.values(line).some(Boolean))
+export const emptyMaintenanceRecord = () => ({
+  type: 'repair', eroCode: '', repairPlace: '', startedOn: '', assignedTo: '', location: '', failureCause: '', mileageHours: '',
+  repairedBy: '', repairHours: '', pmHours: '', parts: [blankPartLine()],
+  vendor: '', vendorAddress: '', finishedOn: '', partsTotal: '', laborTotal: '',
+  completedOn: '', downtime: '', mechanicOperator: '', assistantSupervisor: '', supervisor: '', departmentHead: '', remarks: '',
+  /* files kept with the record; never part of the row itself */
+  files: [],
+})
+export { blankPartLine as blankMaintenancePartLine }
+export function maintenanceRecordFromRow(row) {
+  const parts = partLinesFromJson(row.parts)
+  return {
+    id: row.id, assetId: row.asset_id, type: row.maintenance_type, eroCode: row.ero_code || '', repairPlace: row.repair_place || '',
+    startedOn: row.started_on || '', assignedTo: row.assigned_to || '', location: row.location || '',
+    failureCause: row.failure_cause || '', mileageHours: row.mileage_hours || '',
+    repairedBy: row.repaired_by || '', repairHours: row.repair_hours || '', pmHours: row.pm_hours || '',
+    parts: parts.length ? parts : [blankPartLine()],
+    vendor: row.contractor_vendor || '', vendorAddress: row.contractor_address || '', finishedOn: row.finished_on || '',
+    partsTotal: row.parts_total ?? '', laborTotal: row.labor_total ?? '',
+    completedOn: row.completed_on || '', downtime: row.downtime || '', mechanicOperator: row.mechanic_operator || '',
+    assistantSupervisor: row.assistant_supervisor || '', supervisor: row.supervisor || '', departmentHead: row.department_head || '',
+    remarks: row.remarks || '', createdAt: row.created_at || '', updatedAt: row.updated_at || '',
+  }
+}
+const maintenanceRecordPayload = (value) => ({
+  maintenance_type: value.type === 'pms' ? 'pms' : 'repair', ero_code: optional(value.eroCode), started_on: value.startedOn,
+  /* only sent when something was written, so a save without a code still
+     lands on a table that has not gained the column yet */
+  ...(optional(value.repairPlace) ? { repair_place: optional(value.repairPlace) } : {}),
+  assigned_to: optional(value.assignedTo), location: optional(value.location), failure_cause: optional(value.failureCause), mileage_hours: optional(value.mileageHours),
+  repaired_by: optional(value.repairedBy), repair_hours: optional(value.repairHours), pm_hours: optional(value.pmHours), parts: partLinesToJson(value.parts),
+  contractor_vendor: optional(value.vendor), contractor_address: optional(value.vendorAddress), finished_on: optional(value.finishedOn),
+  parts_total: numberOrNull(value.partsTotal), labor_total: numberOrNull(value.laborTotal),
+  completed_on: optional(value.completedOn), downtime: optional(value.downtime), mechanic_operator: optional(value.mechanicOperator),
+  assistant_supervisor: optional(value.assistantSupervisor), supervisor: optional(value.supervisor), department_head: optional(value.departmentHead), remarks: optional(value.remarks),
+})
+export const createMaintenanceRecord = async (assetId, value) => resultData(
+  await db().from('maintenance_records').insert({ asset_id: assetId, ...maintenanceRecordPayload(value) }).select('id').single(),
+  'Could not save the maintenance record',
+)
+export const updateMaintenanceRecord = async (id, value) => resultData(
+  await db().from('maintenance_records').update(maintenanceRecordPayload(value)).eq('id', id).select('id').single(),
+  'Could not update the maintenance record',
+)
+export const deleteMaintenanceRecord = async (id) => resultData(
+  await db().from('maintenance_records').delete().eq('id', id).select('id').single(),
+  'Could not delete the maintenance record',
+)
 
 export const personDisplayName = (row) => [row.first_name ?? row.first, row.middle_name ?? row.middle, row.last_name ?? row.last]
   .map((part) => String(part || '').trim())
@@ -521,6 +668,26 @@ export async function uploadCompanyLogo(file) {
    pass null to leave the workspace unbranded. */
 export const setCompanyHeaderBrand = async (companyId) =>
   resultData(await db().rpc('set_company_header_brand', { p_company_id: companyId || null }), 'Could not change the workspace brand')
+
+/* Where a numbering series starts and ends, as typed: the zeros on the start
+   are the padding. Saved by set_numbering_sequence, which checks the caller,
+   moves the counter up to the start, and for assets rewrites the numbers the
+   register issued itself in the new width. */
+export async function saveNumberingSequence(kind, { start, end }) {
+  const problem = sequenceProblem(start, end)
+  if (problem) throw new Error(problem)
+  const startText = String(start).trim()
+  const result = await db().rpc('set_numbering_sequence', { p_kind: kind, p_start: Number.parseInt(startText, 10), p_end: Number.parseInt(String(end).trim(), 10), p_width: startText.length })
+  if (result.error) {
+    /* The server's refusals are written for the admin to read - which tags
+       are in the way, which pair would collide - so they are passed through
+       as they are instead of behind a generic prefix. */
+    const error = new Error(result.error.message || 'Could not save the numbering sequence.')
+    error.cause = result.error
+    throw error
+  }
+  return result.data
+}
 
 export async function deleteCompanyLogo(path) {
   if (!path) return
@@ -728,8 +895,57 @@ export async function getTransferAttachmentUrl(attachment) {
   return resultData(await db().storage.from(attachment.bucket || TRANSFER_BUCKET).createSignedUrl(attachment.path, 120), 'Could not open the attached form').signedUrl
 }
 
+/* ------------------- files kept with a maintenance record -------------------
+   The contractor's quotation, the supplier's invoice, a photo of the failed
+   part. Same shape as a filed transfer form: the object goes up under the
+   caller's own folder, then the metadata row is what decides who may read it
+   back. `name` is what the register calls the file, which is not what the
+   phone called it.
+   ------------------------------------------------------------------------ */
+
+export async function saveMaintenanceAttachment(recordId, file, { name = '', note = '' } = {}) {
+  const client = db()
+  const user = resultData(await client.auth.getUser(), 'Could not verify who is filing the file').user
+  if (!user) throw new Error('You must be signed in to attach a file.')
+  const path = `${user.id}/${recordId}/${crypto.randomUUID()}-${safeFilename(file.name)}`
+  resultData(await client.storage.from(MAINT_BUCKET).upload(path, file, { contentType: file.type, upsert: false }), `Could not upload ${file.name}`)
+  const metadata = await client.from('maintenance_record_attachments').insert({
+    record_id: recordId, storage_bucket: MAINT_BUCKET, storage_object_path: path,
+    original_filename: String(name || '').trim() || file.name,
+    mime_type: file.type || 'application/octet-stream', size_bytes: file.size, note: optional(note),
+  }).select(COLUMNS.maintenanceAttachments).single()
+  if (metadata.error) {
+    /* the row is what makes the object readable, so an orphan is worse than none */
+    await client.storage.from(MAINT_BUCKET).remove([path])
+    resultData(metadata, `Could not file ${file.name}`)
+  }
+  return maintenanceAttachmentFromRow(metadata.data)
+}
+
+/* Correcting the name later changes only the label. The stored object keeps
+   its path, so nothing has to be moved. */
+export async function renameMaintenanceAttachment(id, name) {
+  const clean = String(name || '').trim()
+  if (!clean) throw new Error('The file needs a name.')
+  return maintenanceAttachmentFromRow(resultData(
+    await db().from('maintenance_record_attachments').update({ original_filename: clean }).eq('id', id).is('removed_at', null).select(COLUMNS.maintenanceAttachments).single(),
+    'Could not rename the file',
+  ))
+}
+
+export async function removeMaintenanceAttachment(attachment) {
+  const client = db()
+  resultData(await client.from('maintenance_record_attachments').update({ removed_at: new Date().toISOString() }).eq('id', attachment.id).is('removed_at', null).select('id').single(), 'Could not remove the file')
+  const removal = await client.storage.from(attachment.bucket || MAINT_BUCKET).remove([attachment.path])
+  if (removal.error) throw new Error(`The file was removed but its stored copy needs cleanup: ${removal.error.message}`)
+}
+
+export async function getMaintenanceAttachmentUrl(attachment) {
+  return resultData(await db().storage.from(attachment.bucket || MAINT_BUCKET).createSignedUrl(attachment.path, 120), 'Could not open the file').signedUrl
+}
+
 export async function getReceiptUrl(receipt) {
   return resultData(await db().storage.from(receipt.bucket || RECEIPT_BUCKET).createSignedUrl(receipt.path, 120), 'Could not open receipt').signedUrl
 }
 
-export const operationalMapping = Object.freeze({ assets: 'assets', transfers: 'asset_transfers', custody: 'asset_transfers + assets', repairs: 'repair_tickets', parts: 'repair_parts', purchasing: 'repair_parts + repair_part_receipts', maintenance: 'maintenance_schedules + maintenance_completions', companies: 'companies', assetGroups: 'asset_categories', projects: 'project_locations', activity: 'asset_activity', audit: 'asset_audit_log', receipts: 'storage:asset-receipts', companyLogos: 'storage:company-logos', assetPhotos: 'asset_images + storage:asset-photos', transferForms: 'asset_transfer_attachments + storage:transfer-forms', assetDocuments: 'asset_attachments + storage:asset-documents' })
+export const operationalMapping = Object.freeze({ assets: 'assets', transfers: 'asset_transfers', custody: 'asset_transfers + assets', repairs: 'repair_tickets', parts: 'repair_parts', purchasing: 'repair_parts + repair_part_receipts', maintenance: 'maintenance_schedules + maintenance_completions', companies: 'companies', assetGroups: 'asset_categories', projects: 'project_locations', activity: 'asset_activity', audit: 'asset_audit_log', receipts: 'storage:asset-receipts', companyLogos: 'storage:company-logos', assetPhotos: 'asset_images + storage:asset-photos', transferForms: 'asset_transfer_attachments + storage:transfer-forms', assetDocuments: 'asset_attachments + storage:asset-documents', maintenanceHistory: 'maintenance_records', maintenanceAttachments: 'maintenance_record_attachments + storage:maintenance-attachments' })

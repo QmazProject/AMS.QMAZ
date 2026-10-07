@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
-import { Boxes, Eye, EyeOff, LockKeyhole, Mail, ShieldCheck, Volume2, VolumeX, Wrench } from 'lucide-react'
+import { Eye, EyeOff, LockKeyhole, Mail, ShieldCheck, Volume2, VolumeX } from 'lucide-react'
 
 /* =========================================================================
    Sign in — machine-yard intro, then the workspace gate.
@@ -28,14 +28,15 @@ const introParam = () => {
   return m ? m[1] : null
 }
 
-/* The intro is part of arriving at the page, so it runs on every load and a
-   refresh replays it. Reduced-motion skips it; ?intro=0 skips it for anyone
-   iterating on the form itself, and ?intro=1 forces it back on. */
+/* Off by default: the machine-driving-in splash no longer runs on arrival.
+   ?intro=1 brings it back for anyone who wants to see it (a demo, deciding
+   whether to re-enable it for good); ?intro=0 is accepted too, so an old
+   link that forced it off still does what it always did. */
 const playIntro = () => {
   const forced = introParam()
   if (forced === '1') return true
   if (forced === '0') return false
-  return !reducedMotion()
+  return false
 }
 
 const SOUND_KEY = 'am.intro.sound'
@@ -274,17 +275,17 @@ const Excavator = () => (
         <rect x="34" y="152" width="212" height="48" rx="24" fill="#16140E" stroke="#3E3524" strokeWidth="2" />
         <rect
           className="am-cleats" x="34" y="152" width="212" height="48" rx="24" fill="none"
-          stroke="rgba(255,205,17,.5)" strokeWidth="3.4" strokeDasharray="5 11" strokeLinecap="round"
+          stroke="rgba(251,31,31,.5)" strokeWidth="3.4" strokeDasharray="5 11" strokeLinecap="round"
         />
         <circle cx="128" cy="186" r="7" fill="#241F16" stroke="#4B4029" strokeWidth="1.6" />
         <circle cx="164" cy="186" r="7" fill="#241F16" stroke="#4B4029" strokeWidth="1.6" />
         <circle cx="92" cy="186" r="7" fill="#241F16" stroke="#4B4029" strokeWidth="1.6" />
         <circle cx="60" cy="176" r="16" fill="#221E15" stroke="#59492A" strokeWidth="2" />
         <circle cx="222" cy="176" r="16" fill="#221E15" stroke="#59492A" strokeWidth="2" />
-        <g className="am-hub am-hub--a" stroke="rgba(255,205,17,.55)" strokeWidth="2.4" strokeLinecap="round">
+        <g className="am-hub am-hub--a" stroke="rgba(251,31,31,.55)" strokeWidth="2.4" strokeLinecap="round">
           <path d="M60 165v22M49 176h22M52.5 168.5l15 15M67.5 168.5l-15 15" />
         </g>
-        <g className="am-hub am-hub--b" stroke="rgba(255,205,17,.55)" strokeWidth="2.4" strokeLinecap="round">
+        <g className="am-hub am-hub--b" stroke="rgba(251,31,31,.55)" strokeWidth="2.4" strokeLinecap="round">
           <path d="M222 165v22M211 176h22M214.5 168.5l15 15M229.5 168.5l-15 15" />
         </g>
       </g>
@@ -577,31 +578,41 @@ function Intro({ onDone }) {
 }
 
 /* ------------------------------------------------------------------ brand */
+/* The lockup with its glass glaze, shared by the brand panel and the phone
+   header so both carry the same art and the same sliding shine. */
+const Wordmark = ({ mobile = false }) => (
+  <span className={mobile ? 'am-wordmark am-wordmark--mobile' : 'am-wordmark'}>
+    <img
+      className="am-wordmark__art"
+      src="/ams-brand.png"
+      alt="Asset Management System"
+      width="1119"
+      height="274"
+      decoding="async"
+    />
+    <span className="am-wordmark__glaze" aria-hidden="true" />
+  </span>
+)
+
 const Brand = ({ mobile = false }) => (
   <div className={mobile ? 'am-mark am-mark--mobile' : 'am-mark'}>
-    <span className="am-mark__badge" aria-hidden="true">
-      <img src="/ams-logo.png" alt="" width="52" height="52" />
-    </span>
-    <div>
-      <p className="am-mark__name">Asset Management System</p>
-      {mobile && <p className="am-mark__sub">Operations workspace</p>}
-    </div>
+    <Wordmark mobile={mobile} />
   </div>
 )
 
 /* =========================================================================
    Asset globe — the brand panel's centrepiece.
 
-   A dotted Earth turns behind a static wire cage: the land tile is drawn once
-   and stamped four times, and the spin translates exactly one tile width, so
-   the rotation loops seamlessly without shipping a texture. It is also
+   The AMS mark turns inside a static wire cage: the tile is drawn once and
+   stamped four times, and the spin translates exactly one tile width, so the
+   rotation loops seamlessly. It is also
    draggable — see GlobeStage, which wraps the user's own rotation into a single
    tile so no amount of spinning can run off the end of the stamped copies.
 
    The register is not only machines, so the globe cycles the classes it holds
-   — heavy equipment, then plant and tools, then IT and office. Each class gets
-   its own sites, dispatch runs and chips, and the crossfade is timed to a third
-   of a turn, so a full rotation of the Earth shows the whole register once.
+   — heavy equipment, tools, service vehicles, then computer and IT. Each class
+   gets its own sites, dispatch runs and chips, and the crossfade is timed to a
+   quarter of a turn, so a full rotation shows the whole register once.
 
    Geometry is fixed against the sphere at (300,200) r=158 in a 600x400 viewBox.
    The chips are HTML rather than SVG text, positioned as percentages of that
@@ -627,6 +638,7 @@ const SLOTS = [
   { ey: 104, x: 435, left: '72.5%', top: '26%' },
   { ey: 324, x: 165, left: '0%', top: '81%' },
   { ey: 300, x: 435, left: '72.5%', top: '75%' },
+  { ey: 200, x: 165, left: '0%', top: '50%' },
 ]
 
 /* Where each berth's asset sits on the sphere: a longitude offset from its
@@ -637,6 +649,10 @@ const BERTHS = [
   { lon: 20, lat: 19 },
   { lon: -20, lat: -30 },
   { lon: 22, lat: -18 },
+  /* the middle-left berth sits near the class meridian, not out west like
+     the others: no other class fills it, so it has to leave with its own
+     class rather than linger alone while the next one is up */
+  { lon: -6, lat: 2 },
 ]
 
 /* Pins sit where the surface projects them; the band is barely compressed,
@@ -665,13 +681,13 @@ const TILT_MAX = 42
 const clampTilt = (deg) => Math.max(TILT_MIN, Math.min(TILT_MAX, deg))
 
 /* The flight. The orbit is the ellipse already drawn round the sphere; the
-   airliner rides it at its own cruise plus a share of whatever the globe is
+   helicopter rides it at its own cruise plus a share of whatever the globe is
    turning, so a flick of the globe visibly hurries it along. */
 const ORBIT = { rx: 216, ry: 70, tilt: -16 }
-const NEAR = 0 // the two plane copies, near leg first
+const NEAR = 0 // the two helicopter copies, near leg first
 const FAR = 1
 const CRUISE = 0.026 // degrees per ms — a lap in about 14s
-const PLANE_SPIN = 0.5
+const HELI_SPIN = 0.5
 
 const rad = (deg) => (deg * Math.PI) / 180
 const wrap180 = (deg) => {
@@ -681,8 +697,9 @@ const wrap180 = (deg) => {
 
 /* Dispatch runs, bowed away from the centre so they arc over the face rather
    than cutting through it. The order skips the diagonal so the loop never
-   crosses itself: top-left, top-right, bottom-right, bottom-left. */
-const LOOP = [0, 1, 3, 2]
+   crosses itself: top-left, top-right, bottom-right, bottom-left, and the
+   middle-left berth when a class has a fifth asset. */
+const LOOP = [0, 1, 3, 2, 4]
 
 const run = (p, q) => {
   const mx = (p[0] + q[0]) / 2
@@ -693,355 +710,160 @@ const run = (p, q) => {
   return `M${p[0].toFixed(1)} ${p[1].toFixed(1)} Q${cx} ${cy} ${q[0].toFixed(1)} ${q[1].toFixed(1)}`
 }
 
-/* Asset glyphs, drawn on a 24x24 grid and stroked by the chip badge, so they
-   take their colour from --on-gold rather than carrying their own. */
-const GLYPHS = {
-  exc: (
-    <>
-      <rect x="2.4" y="16.3" width="13.2" height="4.7" rx="2.35" />
-      <path d="M5.3 16.3v-5h6.5v5" />
-      <path d="M11.9 12.5l4.8-5.3 3.4 2.6" />
-      <path d="M20.1 9.8l-.7 3.4-3.3-.7" />
-    </>
-  ),
-  dozer: (
-    <>
-      <rect x="4.6" y="16.3" width="11.6" height="4.7" rx="2.35" />
-      <path d="M6.8 16.3v-4.8h6.2v4.8" />
-      <path d="M19.4 10.6v8.4" />
-      <path d="M16.2 17.9l3.2-1.7" />
-      <path d="M9.2 11.5V8.9" />
-    </>
-  ),
-  truck: (
-    <>
-      <circle cx="7" cy="18.2" r="2.4" />
-      <circle cx="16.9" cy="18.2" r="2.4" />
-      <path d="M13.4 15.8v-5.3h3.1l2.6 3.2v4.5" />
-      <path d="M3.4 15.8V9.2l8.8-1.7v8.3" />
-      <path d="M9.4 18.2h5.1" />
-    </>
-  ),
-  loader: (
-    <>
-      <circle cx="7.2" cy="17.5" r="2.9" />
-      <circle cx="15.9" cy="17.5" r="2.9" />
-      <path d="M4.7 14.6v-3.9h6.3v3.9" />
-      <path d="M11 12.3l6.1 2.2" />
-      <path d="M20.7 11.3v4.3l-3.6 1.1" />
-    </>
-  ),
-  genset: (
-    <>
-      <rect x="2.6" y="7.6" width="18.8" height="11" rx="2.4" />
-      <path d="M6.6 7.6V5.8h5v1.8" />
-      <path d="M13.6 10.8h4.6M13.6 13.1h4.6M13.6 15.4h4.6" />
-      <path d="M9.6 9.8l-2.8 4h3.2l-2 3.6" />
-    </>
-  ),
-  drill: (
-    <>
-      <path d="M3.6 8.4h8.8a1.6 1.6 0 0 1 1.6 1.6v2.6a1.6 1.6 0 0 1-1.6 1.6H3.6z" />
-      <path d="M14 10.2h3.2v2.2H14z" />
-      <path d="M17.2 11.3h3.4" />
-      <path d="M6.6 14.6l-1.2 5.8h3.6l.9-5.8" />
-      <path d="M3.6 9.8H2" />
-    </>
-  ),
-  compr: (
-    <>
-      <rect x="2.4" y="11.4" width="17.6" height="6.4" rx="3.2" />
-      <circle cx="6.4" cy="19.9" r="1.4" />
-      <circle cx="16" cy="19.9" r="1.4" />
-      <path d="M8.6 11.4V8.2h4.4v3.2" />
-      <path d="M17.6 11.1V8.6h2.9" />
-    </>
-  ),
-  welder: (
-    <>
-      <rect x="2.6" y="8.6" width="10.4" height="9.4" rx="2" />
-      <path d="M5 11.6h5.6M5 14.2h3.6" />
-      <path d="M13 11.6c3 0 3.6 1.6 5.4 1.6" />
-      <path d="M18.4 11.4l3.2 1.8-3.2 1.8z" />
-      <path d="M20.2 9.2l1.4-1.6M18.4 8.4l.4-2" />
-    </>
-  ),
-  laptop: (
-    <>
-      <path d="M5 7.6h14v8.2H5z" />
-      <path d="M2.6 18.6h18.8l-1.7-2.8H4.3z" />
-    </>
-  ),
-  printer: (
-    <>
-      <path d="M6.6 9.4V4.6h10.8v4.8" />
-      <rect x="3" y="9.4" width="18" height="6.6" rx="1.8" />
-      <path d="M6.6 16v3.8h10.8V16" />
-      <circle cx="17.7" cy="12.2" r=".9" />
-    </>
-  ),
-  server: (
-    <>
-      <rect x="4.6" y="3.4" width="14.8" height="17.2" rx="2" />
-      <path d="M4.6 9.1h14.8M4.6 14.8h14.8" />
-      <circle cx="8" cy="6.2" r=".85" />
-      <circle cx="8" cy="11.9" r=".85" />
-      <circle cx="8" cy="17.6" r=".85" />
-    </>
-  ),
-  radio: (
-    <>
-      <rect x="6.6" y="7.4" width="10.8" height="13.2" rx="2.2" />
-      <path d="M16 7.4V3.6" />
-      <path d="M9.2 10.6h5.6" />
-      <path d="M9.4 14h1.4M12.8 14h1.4M9.4 16.9h1.4M12.8 16.9h1.4" />
-    </>
-  ),
-  crane: (
-    <>
-      <path d="M3.2 20.6h8.4" />
-      <path d="M7.4 20.6V6.4" />
-      <path d="M2.2 6.4h19.6" />
-      <path d="M18.2 6.4v4.8" />
-      <path d="M16.8 11.2h2.8" />
-      <path d="M7.4 6.4l3.4-3" />
-    </>
-  ),
-  roller: (
-    <>
-      <circle cx="7" cy="15.6" r="4.6" />
-      <path d="M14.4 10.6h5.4v6.4a2.6 2.6 0 0 1-2.6 2.6h-2.8z" />
-      <path d="M11.6 15.6h2.8" />
-      <path d="M14.4 10.6V8h3.6" />
-    </>
-  ),
-  mixer: (
-    <>
-      <circle cx="6.6" cy="18.4" r="2.2" />
-      <circle cx="16.4" cy="18.4" r="2.2" />
-      <path d="M2.6 16.2v-5.6h4.4l1.6 2.6" />
-      <path d="M9.4 16.2l1.8-7.6 7.6 1.6-1.8 6.8z" />
-      <path d="M8.8 18.4h5.4" />
-    </>
-  ),
-  forklift: (
-    <>
-      <circle cx="6.4" cy="18" r="2.4" />
-      <circle cx="13.2" cy="18" r="2.4" />
-      <path d="M3.4 15.6V9.2h5.4v6.4" />
-      <path d="M8.8 12.4h3.2v3.2" />
-      <path d="M16.6 4.4v13.8" />
-      <path d="M16.6 15.4h4.4" />
-    </>
-  ),
-  moto: (
-    <>
-      <circle cx="5.4" cy="16.4" r="3.4" />
-      <circle cx="18.6" cy="16.4" r="3.4" />
-      <path d="M8.6 16.4l2.8-4.6h4.4l2.8 4.6" />
-      <path d="M11.4 11.8H9l-1.6 2.6" />
-      <path d="M13.6 9.2h3.2" />
-    </>
-  ),
-  pickup: (
-    <>
-      <circle cx="7.4" cy="17.6" r="2.3" />
-      <circle cx="16.8" cy="17.6" r="2.3" />
-      <path d="M2.4 17.6v-4.8h4.2l2.2-3.6h4.6v8.4" />
-      <path d="M13.4 12.8h8.2v4.8h-2.5" />
-      <path d="M9.7 17.6h4.8" />
-    </>
-  ),
-  van: (
-    <>
-      <circle cx="7.6" cy="17.8" r="2.2" />
-      <circle cx="16.6" cy="17.8" r="2.2" />
-      <path d="M2.6 17.8V7.8h11.2l5.6 4.8v5.2h-2.8" />
-      <path d="M9.8 17.8h4.6" />
-      <path d="M13.8 7.8v4.8h5.6" />
-    </>
-  ),
-  car: (
-    <>
-      <circle cx="7.2" cy="17.4" r="2.2" />
-      <circle cx="16.8" cy="17.4" r="2.2" />
-      <path d="M2.6 17.4v-4.2l2.8-4.4h9.2l4.4 4.4h2.4v4.2h-1.6" />
-      <path d="M9.4 17.4h5.2" />
-      <path d="M5.4 13.2h13.6" />
-    </>
-  ),
-  aircon: (
-    <>
-      <rect x="2.4" y="5.4" width="19.2" height="7.6" rx="2.2" />
-      <path d="M5.4 10.2h13.2" />
-      <path d="M6.6 16.2c1.5 0 1.5 2.2 3 2.2" />
-      <path d="M12 16.2c1.5 0 1.5 2.2 3 2.2" />
-      <path d="M17.4 16.2c1.1 0 1.4 1.2 2.2 1.9" />
-    </>
-  ),
-  pump: (
-    <>
-      <circle cx="10.2" cy="13" r="4.6" />
-      <path d="M10.2 8.4V5.2h4.6" />
-      <path d="M14.8 13h5.6" />
-      <path d="M4.2 20.4h12.4" />
-      <path d="M10.2 17.6v2.8" />
-    </>
-  ),
-  tower: (
-    <>
-      <rect x="6.4" y="3.4" width="11.2" height="4" rx="1.3" />
-      <path d="M12 7.4v11.2" />
-      <path d="M6.8 20.6h10.4" />
-      <path d="M9 18.6h6" />
-      <path d="M8.8 8.6h6.4" />
-    </>
-  ),
-  tank: (
-    <>
-      <rect x="2.4" y="7.6" width="15.6" height="9" rx="4.5" />
-      <path d="M7 7.6v9M13.4 7.6v9" />
-      <path d="M5.4 16.6v3.4M15 16.6v3.4" />
-      <path d="M18 10.6h3.6v5.4" />
-    </>
-  ),
-}
-
-/* One class per slice of the turn. Sites differ per class so the pins land
-   somewhere new each time the carousel advances, and every class fills the
-   same four berths — see PER_CLASS below. */
+/* One class per slice of the turn, one per folder in public/Globe Assets:
+   the folder is the category and each image in it an asset type, shown in
+   the chip badge. The icons are black silhouettes, so the badge uses them as
+   a mask and fills them with its own ink rather than showing them as-is.
+   Sites differ per class so the pins land somewhere new each time the
+   carousel advances. A class holds four assets, or five — the fifth takes
+   the middle berth on the left. */
+const ICON_DIR = '/Globe Assets'
 const CLASSES = [
   {
     key: 'heavy',
-    label: 'Heavy equipment',
+    label: 'Heavy Equipment',
     items: [
-      { g: 'exc', name: 'Excavator', meta: 'SITE 04 · WORKING' },
-      { g: 'dozer', name: 'Bulldozer', meta: 'SITE 11 · WORKING' },
-      { g: 'truck', name: 'Dump truck', meta: 'YARD 02 · HAULING' },
-      { g: 'loader', name: 'Wheel loader', meta: 'SITE 07 · SERVICE' },
+      { icon: 'Excavator.png', name: 'Excavator', site: 'PROJECT SITE 01', status: 'OPERATIONAL' },
+      { icon: 'bulldozer.png', name: 'Bulldozer', site: 'PROJECT SITE 02', status: 'OPERATIONAL' },
+      { icon: 'Dump Truck.png', name: 'Dump Truck', site: 'YARD 01', status: 'AVAILABLE' },
+      { icon: 'Wheel Loader.png', name: 'Wheel Loader', site: 'PROJECT SITE 03', status: 'OPERATIONAL' },
     ],
   },
   {
-    key: 'site',
-    label: 'Site plant',
+    key: 'tools',
+    label: 'Tools',
     items: [
-      { g: 'crane', name: 'Tower crane', meta: 'SITE 04 · LIFTING' },
-      { g: 'roller', name: 'Road roller', meta: 'SITE 11 · COMPACTING' },
-      { g: 'mixer', name: 'Concrete mixer', meta: 'YARD 02 · MIXING' },
-      { g: 'forklift', name: 'Forklift', meta: 'STORE 01 · MOVING' },
+      { icon: 'power drill.png', name: 'Power Drill', site: 'PROJECT SITE 01', status: 'OPERATIONAL' },
+      { icon: 'grinder.png', name: 'Grinder', site: 'PROJECT SITE 04', status: 'OPERATIONAL' },
+      { icon: 'jackhammer.png', name: 'Jackhammer', site: 'YARD 02', status: 'AVAILABLE' },
+      { icon: 'circular-saw.png', name: 'Circular Saw', site: 'PROJECT SITE 02', status: 'AVAILABLE' },
     ],
   },
   {
-    key: 'plant',
-    label: 'Plant & tools',
+    key: 'vehicle',
+    label: 'Service Vehicle',
     items: [
-      { g: 'genset', name: 'Generator', meta: 'SITE 04 · RUNNING' },
-      { g: 'drill', name: 'Power drill', meta: 'STORE 01 · ISSUED' },
-      { g: 'compr', name: 'Compressor', meta: 'SITE 11 · IDLE' },
-      { g: 'welder', name: 'Welding set', meta: 'YARD 02 · IN USE' },
-    ],
-  },
-  {
-    key: 'fleet',
-    label: 'Vehicles & fleet',
-    items: [
-      { g: 'moto', name: 'Motorcycle', meta: 'FIELD · DISPATCHED' },
-      { g: 'pickup', name: 'Pickup truck', meta: 'SITE 07 · ON RUN' },
-      { g: 'van', name: 'Service van', meta: 'HQ · ASSIGNED' },
-      { g: 'car', name: 'Staff car', meta: 'HQ · POOL' },
-    ],
-  },
-  {
-    key: 'facil',
-    label: 'Facilities',
-    items: [
-      { g: 'aircon', name: 'Air conditioner', meta: 'HQ · COOLING' },
-      { g: 'pump', name: 'Water pump', meta: 'SITE 07 · RUNNING' },
-      { g: 'tower', name: 'Light tower', meta: 'SITE 11 · NIGHT' },
-      { g: 'tank', name: 'Fuel tank', meta: 'YARD 02 · 68% FULL' },
+      { icon: 'Pick up truck.png', name: 'Pick Up Truck', site: 'PROJECT SITE 03', status: 'OPERATIONAL' },
+      { icon: 'Service Van.png', name: 'Van', site: 'YARD 01', status: 'AVAILABLE' },
+      { icon: 'Motorcycle.png', name: 'Motorcycle', site: 'PROJECT SITE 05', status: 'OPERATIONAL' },
+      { icon: 'Delivery Van.png', name: 'Travis Vehicle', site: 'YARD 02', status: 'OPERATIONAL' },
+      { icon: 'Staff Service Car.png', name: 'Hilux Vehicle', site: 'OFFICE 01', status: 'AVAILABLE' },
     ],
   },
   {
     key: 'it',
-    label: 'IT & office',
+    label: 'Computer and IT Equipment Office',
     items: [
-      { g: 'laptop', name: 'Laptop', meta: 'HQ · ASSIGNED' },
-      { g: 'printer', name: 'Printer', meta: 'HQ · ACTIVE' },
-      { g: 'server', name: 'Server rack', meta: 'DATA ROOM · UP' },
-      { g: 'radio', name: 'Radio unit', meta: 'SITE 07 · ISSUED' },
+      { icon: 'Laptop.png', name: 'Laptop', site: 'OFFICE 05', status: 'OPERATIONAL' },
+      { icon: 'printer.png', name: 'Printer', site: 'OFFICE 03', status: 'AVAILABLE' },
+      { icon: 'domain-servers.png', name: 'Domain Servers', site: 'OFFICE 01', status: 'OPERATIONAL' },
+      { icon: 'aircon.png', name: 'Aircon', site: 'OFFICE 02', status: 'OPERATIONAL' },
     ],
   },
 ]
 
 /* Classes are spaced evenly round the sphere, so one revolution hands the
-   berths through the whole register once. FULL and GONE — where a pin stops
-   being fully lit, and where it goes — are fractions of that arc rather than
-   fixed angles, so adding a class narrows the handover in step instead of
-   leaving two classes lit in the same berths. GONE sits just past half the
-   arc: far enough that the outgoing class is still fading as the incoming one
-   starts — a crossfade rather than a blink — but close enough that two labels
-   share a berth only briefly, which matters more now that a handover comes
-   round twice as often. Both are inside a quarter turn, so a pin is always
-   gone before it would reach the back of the sphere. */
+   berths through the whole register once. A class is up while it sits within
+   HOLD of its arc of dead ahead — the same moment its name shows under the
+   globe — and goes down as it turns past that. The gap between one class's
+   HOLD and the next is longer than CLOSE_MS at the resting drift, so one
+   class has folded away before the next one opens: never two at once. */
 const CLASS_ARC = 360 / CLASSES.length
-const FULL = CLASS_ARC * 0.383
-const GONE = CLASS_ARC * 0.56
-const PER_CLASS = BERTHS.length
+const HOLD = 0.42
+
+/* The pop. Every asset plays the same three beats in order — its pin lands
+   on the sphere, a signal runs out along the leader to the berth, and the
+   chip springs open where the signal arrives — and closing plays exactly the
+   same beats backwards, so the chip folds into the leader, the signal runs
+   home, and the pin goes. It is one progress value per class, run on time
+   rather than on the turn, so the pop plays at the same speed however the
+   globe is being turned. Berths start a beat apart so a class unfolds round
+   the globe rather than all at once. */
+const OPEN_MS = 1500
+const CLOSE_MS = 900
+const STAGGER = 0.07 // of the open, per berth
+const SPAN = 1 - STAGGER * (SLOTS.length - 1)
+const seg = (v, a, b) => Math.max(0, Math.min(1, (v - a) / (b - a)))
+const easeOut = (x) => 1 - (1 - x) ** 3
+/* overshoots past 1 and settles: the spring in the pop */
+const springOut = (x) => 1 + 2.4 * (x - 1) ** 3 + 1.4 * (x - 1) ** 2
+
+/* Each class's dispatch loop runs only through the berths it fills, and
+   AT[class][berth] is the asset sitting in that berth. */
+const LOOPS = CLASSES.map(({ items }) => LOOP.filter((slot) => slot < items.length))
 
 /* Every asset in the register, flattened and given a home on the sphere. The
    class index sets the meridian, the berth index sets the offset from it, so
-   the four assets of a class arrive together and leave together. */
+   the assets of a class arrive together and leave together. */
 const ASSETS = CLASSES.flatMap(({ key, items }, cls) =>
   items.map((item, slot) => ({
     ...item,
-    id: `${key}-${item.g}`,
+    id: `${key}-${slot}`,
+    src: encodeURI(`${ICON_DIR}/${CLASSES[cls].label}/${item.icon}`),
     cls,
     slot,
     lon: -cls * CLASS_ARC + BERTHS[slot].lon,
     lat: BERTHS[slot].lat,
   }))
 )
+const AT = CLASSES.map((_, c) => {
+  const row = []
+  ASSETS.forEach((a, i) => { if (a.cls === c) row[a.slot] = i })
+  return row
+})
 
-/* One tile of coastline. The outlines are drawn on a 288x236 grid and scaled
-   to the sphere's 384x316; the dot pattern is defined pre-scale so it lands
-   back on a 6-unit grid, keeping the texture density the same at any sphere
-   size. 384 divides by that 6, so the stamped copies tile without a seam. */
-const LandTile = () => (
+/* One tile of the turning surface: the AMS mark, keyed off its plate so the
+   dark body shows through round the letters. The tile is the sphere's 2r
+   tall and TILE wide, and the mark sits centred in it with a gap either side,
+   so the stamped copies follow one another across the face with open ground
+   between — one mark going round inside the ball rather than a band of them. */
+const MARK = { w: 262, h: 42 } // 844x136 art, scaled to the tile
+const MarkTile = () => (
   <g id="am-land" className="am-land">
-    <g transform="scale(1.333,1.339)">
-      <path d="M18 36C32 22 62 20 78 34c10 9 4 23-8 32-8 6-12 18-22 20-10 2-16-10-21-21-5-11-17-20-9-29Z" />
-      <path d="M62 110c14-7 27 2 29 16 2 16-7 34-13 46-5 10-14 8-17-2-5-14-8-36-5-49 1-6 3-9 6-11Z" />
-      <path d="M126 34c15-7 34-3 42 7 7 8 2 18-5 23 9 10 13 25 10 43-3 19-15 38-25 50-8 9-17 6-20-5-7-21-10-48-8-69 1-16 0-36 6-49Z" />
-      <path d="M179 27c21-8 55-6 75 3 15 7 18 20 8 28-10 8-26 6-37 13-11 6-19 19-30 17-11-2-16-15-18-29-1-13-6-27 2-32Z" />
-      <path d="M233 156c13-6 29-3 34 8 5 11-3 23-16 24-13 2-22-6-22-17 0-7 1-13 4-15Z" />
-      <circle cx="100" cy="96" r="4" />
-      <circle cx="206" cy="104" r="5" />
-      <circle cx="274" cy="92" r="3.5" />
-      <circle cx="44" cy="108" r="3" />
-    </g>
-  </g>
-)
-
-/* The airliner. Drawn nose along +x and centred on its own origin, so the
-   pass can drop it anywhere on the orbit with one translate/rotate/scale. It
-   is rendered twice — once behind the sphere, once in front — and the pass
-   shows whichever copy matches the half of the orbit it is currently on, so
-   the globe occludes it on the far leg and it flies over the face on the near
-   one. That swap happens out at the ellipse's extremes, well clear of the
-   sphere, so the flight reads as continuous. */
-const Plane = ({ innerRef, far = false }) => (
-  <g ref={innerRef} className={far ? 'am-plane am-plane--far' : 'am-plane'} style={{ opacity: 0 }}>
-    <path className="am-plane__trail" d="M-13 0H-38" />
-    <path
-      className="am-plane__body"
-      d="M11 0 L4 -1.5 L2 -1.6 L-3 -9 L-5 -9 L-2 -1.8 L-7 -1.8 L-9.5 -4.5 L-11 -4.5
-         L-10.5 -1.2 L-11.5 0 L-10.5 1.2 L-11 4.5 L-9.5 4.5 L-7 1.8 L-2 1.8 L-5 9
-         L-3 9 L2 1.6 L4 1.5 Z"
+    <image
+      href="/ams-mark.png" preserveAspectRatio="xMidYMid meet"
+      x={(TILE - MARK.w) / 2} y={GLOBE.r - MARK.h / 2} width={MARK.w} height={MARK.h}
     />
   </g>
 )
 
-const AssetGlobe = ({ landRef, lats, mers, sites, pins, leads, glows, pulses, flows, nearPlane, farPlane }) => (
+/* The helicopter, seen from above. Drawn nose along +x and centred on its
+   own origin, so the pass can drop it anywhere on the orbit with one
+   translate/rotate/scale. It is rendered twice — once behind the sphere, once
+   in front — and the pass shows whichever copy matches the half of the orbit
+   it is currently on, so the globe occludes it on the far leg and it flies
+   over the face on the near one. That swap happens out at the ellipse's
+   extremes, well clear of the sphere, so the flight reads as continuous.
+
+   The rotors turn in CSS, on their own clock: the pass only ever writes the
+   outer group's transform, and each rotor spins about its own hub inside it.
+   The main rotor is four blades over a faint disc — the blur a real rotor
+   leaves — and the tail rotor, edge-on from above, beats as a short bar. */
+const Heli = ({ innerRef, far = false }) => (
+  <g ref={innerRef} className={far ? 'am-heli am-heli--far' : 'am-heli'} style={{ opacity: 0 }}>
+    {/* landing skids, just proud of the cabin either side */}
+    <path className="am-heli__skid" d="M-3 -4.6H8.5M-3 4.6H8.5" />
+    {/* tail boom, tailplane and the tail rotor at its end */}
+    <path className="am-heli__body" d="M-2 -1.3 L-16 -.6 L-16 .6 L-2 1.3 Z" />
+    <rect className="am-heli__body" x="-14" y="-3.4" width="1.8" height="6.8" rx=".6" />
+    <g transform="translate(-16.6 1.5)">
+      <rect className="am-heli__tail" x="-2.6" y="-.45" width="5.2" height=".9" rx=".45" />
+    </g>
+    {/* the cabin and its canopy */}
+    <ellipse className="am-heli__body" cx="3.2" cy="0" rx="7.4" ry="4.3" />
+    <ellipse className="am-heli__glass" cx="7.6" cy="0" rx="2.9" ry="3" />
+    {/* the main rotor, hub over the cabin */}
+    <g transform="translate(2.6 0)">
+      <circle className="am-heli__disc" r="13" />
+      <g className="am-heli__rotor">
+        <path className="am-heli__blade" d="M0 0L13 0M0 0L-13 0M0 0L0 13M0 0L0 -13" />
+      </g>
+      <circle className="am-heli__hub" r="1.4" />
+    </g>
+  </g>
+)
+
+const AssetGlobe = ({ landRef, lats, mers, sites, pins, leads, glows, pulses, heads, flows, nearHeli, farHeli }) => (
   <svg
     className="am-globe__svg" viewBox="0 0 600 400"
     xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"
@@ -1051,10 +873,6 @@ const AssetGlobe = ({ landRef, lats, mers, sites, pins, leads, glows, pulses, fl
         <circle cx={GLOBE.cx} cy={GLOBE.cy} r={GLOBE.r} />
       </clipPath>
 
-      <pattern id="am-dots" width="4.5" height="4.5" patternUnits="userSpaceOnUse">
-        <circle cx="1.35" cy="1.35" r=".93" fill="rgba(255,205,17,.74)" />
-      </pattern>
-
       <radialGradient id="am-body" cx="34%" cy="27%" r="84%">
         <stop offset="0%" stopColor="#22262d" />
         <stop offset="54%" stopColor="#14171b" />
@@ -1062,9 +880,9 @@ const AssetGlobe = ({ landRef, lats, mers, sites, pins, leads, glows, pulses, fl
       </radialGradient>
 
       <radialGradient id="am-halo">
-        <stop offset="60%" stopColor="rgba(255,205,17,0)" />
-        <stop offset="82%" stopColor="rgba(255,205,17,.15)" />
-        <stop offset="100%" stopColor="rgba(255,205,17,0)" />
+        <stop offset="60%" stopColor="rgba(251,31,31,0)" />
+        <stop offset="82%" stopColor="rgba(251,31,31,.15)" />
+        <stop offset="100%" stopColor="rgba(251,31,31,0)" />
       </radialGradient>
 
       {/* the land fades toward the limb, which is what makes it read as a ball */}
@@ -1079,8 +897,8 @@ const AssetGlobe = ({ landRef, lats, mers, sites, pins, leads, glows, pulses, fl
       </mask>
 
       <radialGradient id="am-sheen" cx="30%" cy="24%" r="62%">
-        <stop offset="0%" stopColor="rgba(255,205,17,.16)" />
-        <stop offset="100%" stopColor="rgba(255,205,17,0)" />
+        <stop offset="0%" stopColor="rgba(251,31,31,.16)" />
+        <stop offset="100%" stopColor="rgba(251,31,31,0)" />
       </radialGradient>
 
       {/* the terminator: light sits up and to the left, so the far limb falls
@@ -1094,25 +912,25 @@ const AssetGlobe = ({ landRef, lats, mers, sites, pins, leads, glows, pulses, fl
 
       {/* a thin bright edge where the surface curves away — atmosphere */}
       <radialGradient id="am-fresnel">
-        <stop offset="80%" stopColor="rgba(255,205,17,0)" />
-        <stop offset="95%" stopColor="rgba(255,205,17,.26)" />
-        <stop offset="100%" stopColor="rgba(255,205,17,.04)" />
+        <stop offset="80%" stopColor="rgba(251,31,31,0)" />
+        <stop offset="95%" stopColor="rgba(251,31,31,.26)" />
+        <stop offset="100%" stopColor="rgba(251,31,31,.04)" />
       </radialGradient>
 
       <radialGradient id="am-pin-glow">
-        <stop offset="0%" stopColor="rgba(255,205,17,.5)" />
-        <stop offset="50%" stopColor="rgba(255,205,17,.14)" />
-        <stop offset="100%" stopColor="rgba(255,205,17,0)" />
+        <stop offset="0%" stopColor="rgba(251,31,31,.5)" />
+        <stop offset="50%" stopColor="rgba(251,31,31,.14)" />
+        <stop offset="100%" stopColor="rgba(251,31,31,0)" />
       </radialGradient>
 
-      <LandTile />
+      <MarkTile />
     </defs>
 
     {/* orbit and the far leg of the flight, behind the sphere so the near
         half of the globe occludes them */}
     <g transform={`rotate(${ORBIT.tilt} ${GLOBE.cx} ${GLOBE.cy})`}>
       <ellipse className="am-orbit" cx={GLOBE.cx} cy={GLOBE.cy} rx={ORBIT.rx} ry={ORBIT.ry} />
-      <Plane innerRef={farPlane} far />
+      <Heli innerRef={farHeli} far />
     </g>
 
     <circle cx={GLOBE.cx} cy={GLOBE.cy} r="200" fill="url(#am-halo)" />
@@ -1149,7 +967,7 @@ const AssetGlobe = ({ landRef, lats, mers, sites, pins, leads, glows, pulses, fl
         their paths are rebuilt every frame alongside them. */}
     {CLASSES.map(({ key }, c) => (
       <g key={key} ref={(el) => { flows.current[c] = el }} style={{ opacity: 0 }}>
-        {LOOP.map((slot) => (
+        {LOOPS[c].map((slot) => (
           <g key={slot} style={{ '--d': `${slot * 0.9}s` }}>
             <path className="am-flow" ref={(el) => { flows.current[`${c}.${slot}a`] = el }} />
             <path className="am-flow__halo" pathLength="100" ref={(el) => { flows.current[`${c}.${slot}b`] = el }} />
@@ -1168,7 +986,7 @@ const AssetGlobe = ({ landRef, lats, mers, sites, pins, leads, glows, pulses, fl
         {/* a charge running pin -> chip, so the tether reads as a live link */}
         <path
           className="am-lead__pulse" pathLength="100"
-          style={{ '--d': `${a.slot * 0.6}s` }}
+          style={{ '--d': `${a.slot * 0.6}s`, opacity: 0 }}
           ref={(el) => { pulses.current[i] = el }}
         />
         <g ref={(el) => { pins.current[i] = el }} style={{ '--d': `${0.18 + a.slot * 0.12}s` }}>
@@ -1178,12 +996,14 @@ const AssetGlobe = ({ landRef, lats, mers, sites, pins, leads, glows, pulses, fl
           <circle className="am-pin__ring" r="6.4" />
           <circle className="am-pin__dot" r="3.4" />
         </g>
+        {/* the signal running out to the chip, over the pin it leaves from */}
+        <circle className="am-lead__head" r="3.2" ref={(el) => { heads.current[i] = el }} style={{ opacity: 0 }} />
       </g>
     ))}
 
     {/* the near leg of the flight, over the face */}
     <g transform={`rotate(${ORBIT.tilt} ${GLOBE.cx} ${GLOBE.cy})`}>
-      <Plane innerRef={nearPlane} />
+      <Heli innerRef={nearHeli} />
     </g>
   </svg>
 )
@@ -1198,14 +1018,19 @@ const AssetChips = ({ chips }) => (
     {ASSETS.map((a, i) => (
       <div
         className="am-chip" key={a.id} ref={(el) => { chips.current[i] = el }}
-        style={{ left: SLOTS[a.slot].left, top: SLOTS[a.slot].top, opacity: 0 }}
+        style={{
+          left: SLOTS[a.slot].left, top: SLOTS[a.slot].top, opacity: 0,
+          /* it springs from, and folds back into, the edge its leader meets */
+          transformOrigin: SLOTS[a.slot].x < GLOBE.cx ? '100% 50%' : '0% 50%',
+        }}
       >
         <span className="am-chip__badge">
-          <svg className="am-chip__gl" viewBox="0 0 24 24" aria-hidden="true">{GLYPHS[a.g]}</svg>
+          <span className="am-chip__gl" style={{ '--icon': `url("${a.src}")` }} aria-hidden="true" />
         </span>
         <span className="am-chip__txt">
           <span className="am-chip__name">{a.name}</span>
-          <span className="am-chip__meta">{a.meta}</span>
+          <span className="am-chip__meta">{a.site}</span>
+          <span className={`am-chip__meta am-chip__status am-chip__status--${a.status.toLowerCase()}`}>{a.status}</span>
         </span>
       </div>
     ))}
@@ -1235,12 +1060,14 @@ const GlobeStage = ({ running = true }) => {
   const landRef = useRef(null)
   const lats = useRef([])
   const mers = useRef([])
-  const planes = useRef([])
+  const helis = useRef([])
   const sites = useRef([])
   const pins = useRef([])
   const leads = useRef([])
   const glows = useRef([])
   const pulses = useRef([])
+  const heads = useRef([])
+  const pop = useRef(CLASSES.map(() => 0))
   const flows = useRef({})
   const chips = useRef([])
   const caps = useRef([])
@@ -1254,11 +1081,13 @@ const GlobeStage = ({ running = true }) => {
   const held = useRef(false)
   const drag = useRef(null)
 
-  /* the two plane copies are held by the pass, so their refs are its own */
-  const nearPlane = useCallback((el) => { planes.current[NEAR] = el }, [])
-  const farPlane = useCallback((el) => { planes.current[FAR] = el }, [])
+  /* the two helicopter copies are held by the pass, so their refs are its own */
+  const nearHeli = useCallback((el) => { helis.current[NEAR] = el }, [])
+  const farHeli = useCallback((el) => { helis.current[FAR] = el }, [])
 
-  const paint = useCallback(() => {
+  /* dt is how far the pop should advance: the loop passes the frame time,
+     and a drag or key repaints with 0 so it moves the globe but not the clock */
+  const paint = useCallback((dt = 0) => {
     const t = turn.current
     /* One lean drives every part of the graphic. cp/sp are its cosine and
        sine: a point on the sphere is (cos lat sin lon, sin lat, cos lat cos
@@ -1308,19 +1137,37 @@ const GlobeStage = ({ running = true }) => {
       el.setAttribute('ry', Math.max(0.4, rx * Math.abs(sp)).toFixed(1))
     })
 
-    const lit = CLASSES.map(() => 0)
+    /* Which class is up: the one nearest dead ahead, while it is within
+       HOLD of it. It only starts to open once every other class has folded
+       away, so a fast drag through several still shows them one at a time. */
+    const phase = t / CLASS_ARC
+    const near = Math.round(phase)
+    const up = Math.abs(phase - near) <= HOLD
+      ? ((near % CLASSES.length) + CLASSES.length) % CLASSES.length
+      : -1
+    const prog = pop.current
+    const clear = (c) => prog.every((v, o) => o === c || v === 0)
+    CLASSES.forEach((_, c) => {
+      prog[c] = c === up && clear(c)
+        ? Math.min(1, prog[c] + dt / OPEN_MS)
+        : Math.max(0, prog[c] - dt / CLOSE_MS)
+    })
+
     const spot = []
-
     ASSETS.forEach((a, i) => {
+      /* this asset's own run through the three beats */
+      const k = seg(prog[a.cls], a.slot * STAGGER, a.slot * STAGGER + SPAN)
+      if (sites.current[i]) sites.current[i].style.opacity = k > 0 ? 1 : 0
+      const chip = chips.current[i]
+      if (k <= 0) {
+        if (chip) chip.style.opacity = 0
+        return
+      }
+      const pinK = seg(k, 0, 0.3)
+      const runK = seg(k, 0.25, 0.65)
+      const chipK = seg(k, 0.6, 1)
+
       const rel = wrap180(a.lon + t)
-      const m = Math.abs(rel)
-      const o = m <= FULL ? 1 : m >= GONE ? 0 : (GONE - m) / (GONE - FULL)
-      if (o > lit[a.cls]) lit[a.cls] = o
-
-      if (sites.current[i]) sites.current[i].style.opacity = o
-      if (chips.current[i]) chips.current[i].style.opacity = o
-      if (o <= 0) return
-
       const cosLat = Math.cos(rad(a.lat))
       const sinLat = Math.sin(rad(a.lat))
       const face = cosLat * Math.cos(rad(rel))
@@ -1329,7 +1176,7 @@ const GlobeStage = ({ running = true }) => {
          us, and it drives the size falloff */
       const y = GLOBE.cy - GLOBE.r * (sinLat * cp - face * sp)
       const z = sinLat * sp + face * cp
-      const scale = DEPTH + (1 - DEPTH) * Math.max(z, 0)
+      const scale = (DEPTH + (1 - DEPTH) * Math.max(z, 0)) * springOut(pinK)
       spot[i] = [x, y]
 
       const pin = pins.current[i]
@@ -1339,20 +1186,47 @@ const GlobeStage = ({ running = true }) => {
           `translate(${x.toFixed(1)} ${y.toFixed(1)}) scale(${scale.toFixed(3)})`
         )
       }
-      const d = `M${x.toFixed(1)} ${y.toFixed(1)} ${SLOTS[a.slot].x} ${SLOTS[a.slot].ey}`
-      for (const layer of [leads, glows, pulses]) {
+
+      /* the leader only reaches as far as the signal has run */
+      const { x: bx, ey: by } = SLOTS[a.slot]
+      const reach = easeOut(runK)
+      const hx = x + (bx - x) * reach
+      const hy = y + (by - y) * reach
+      const part = `M${x.toFixed(1)} ${y.toFixed(1)} ${hx.toFixed(1)} ${hy.toFixed(1)}`
+      for (const layer of [leads, glows]) {
         const el = layer.current[i]
-        if (el) el.setAttribute('d', d)
+        if (el) el.setAttribute('d', part)
+      }
+      /* the signal itself: a spark at the leader's tip, bright mid-run and
+         spent by the time it lands, which is when the chip takes over */
+      const head = heads.current[i]
+      if (head) {
+        head.setAttribute('cx', hx.toFixed(1))
+        head.setAttribute('cy', hy.toFixed(1))
+        head.style.opacity = runK > 0 && runK < 1 ? Math.sin(Math.PI * runK) : 0
+      }
+      /* the steady charge along a live link only runs once the chip is open */
+      const pulse = pulses.current[i]
+      if (pulse) {
+        pulse.setAttribute('d', `M${x.toFixed(1)} ${y.toFixed(1)} ${bx} ${by}`)
+        pulse.style.opacity = chipK
+      }
+      if (chip) {
+        chip.style.opacity = seg(chipK, 0, 0.45)
+        chip.style.transform = `translateY(-50%) scale(${(0.08 + 0.92 * springOut(chipK)).toFixed(3)})`
       }
     })
 
     CLASSES.forEach((_, c) => {
       const g = flows.current[c]
-      if (g) g.style.opacity = lit[c] * 0.9
-      if (!lit[c]) return
-      LOOP.forEach((slot, n) => {
-        const p = spot[c * PER_CLASS + slot]
-        const q = spot[c * PER_CLASS + LOOP[(n + 1) % LOOP.length]]
+      /* the dispatch runs between the pins come last and go first */
+      const shown = seg(prog[c], 0.85, 1)
+      if (g) g.style.opacity = shown * 0.9
+      if (!shown) return
+      const loop = LOOPS[c]
+      loop.forEach((slot, n) => {
+        const p = spot[AT[c][slot]]
+        const q = spot[AT[c][loop[(n + 1) % loop.length]]]
         if (!p || !q) return
         const d = run(p, q)
         for (const suffix of ['a', 'b', 'c']) {
@@ -1361,25 +1235,19 @@ const GlobeStage = ({ running = true }) => {
         }
       })
     })
-    /* Only ever show one label. Two crossfading labels sit on top of each
-       other and read as jumbled text, so instead the caption dips to zero at
-       the handover and comes back up with the next class's name. */
-    const phase = t / CLASS_ARC
-    const near = Math.round(phase)
-    const gap = Math.abs(phase - near)
-    const show = gap <= 0.3 ? 1 : Math.max(0, (0.5 - gap) / 0.2)
-    const front = ((near % CLASSES.length) + CLASSES.length) % CLASSES.length
-    caps.current.forEach((el, c) => { if (el) el.style.opacity = c === front ? show : 0 })
+    /* The class's name leads the pop and is the last thing to go when it
+       folds. Only one class is ever open, so only one name ever shows. */
+    caps.current.forEach((el, c) => { if (el) el.style.opacity = easeOut(seg(prog[c], 0, 0.2)) })
 
     /* The flight. Both copies get the same transform; only one is shown, and
        which one is simply which half of the orbit it is on — the lower half
        passes in front of the globe, the upper half behind it. */
-    const ang = rad(air.current + t * PLANE_SPIN)
+    const ang = rad(air.current + t * HELI_SPIN)
     const ahead = Math.sin(ang) > 0
     const at = `translate(${(GLOBE.cx + ORBIT.rx * Math.cos(ang)).toFixed(1)} ${(GLOBE.cy + ORBIT.ry * Math.sin(ang)).toFixed(1)}) `
       + `rotate(${((Math.atan2(ORBIT.ry * Math.cos(ang), -ORBIT.rx * Math.sin(ang)) * 180) / Math.PI).toFixed(1)}) `
       + `scale(${(0.92 + 0.42 * (0.5 + 0.5 * Math.sin(ang))).toFixed(3)})`
-    planes.current.forEach((el, leg) => {
+    helis.current.forEach((el, leg) => {
       if (!el) return
       el.setAttribute('transform', at)
       el.style.opacity = (leg === NEAR) === ahead ? 1 : 0
@@ -1403,7 +1271,7 @@ const GlobeStage = ({ running = true }) => {
       /* clamp the step so a backgrounded tab does not resume with a lurch */
       const dt = Math.min(now - last, 64)
       last = now
-      /* the aircraft keeps flying while the globe is held — a plane frozen
+      /* the aircraft keeps flying while the globe is held — a helicopter frozen
          mid-air reads as a broken animation, not a paused one */
       if (!calm) air.current = (air.current + CRUISE * dt) % 360
       if (!held.current) {
@@ -1423,7 +1291,8 @@ const GlobeStage = ({ running = true }) => {
         }
       }
       turn.current = ((turn.current % 360) + 360) % 360
-      paint()
+      /* reduced motion snaps a class open or shut rather than playing the pop */
+      paint(calm ? CLOSE_MS + OPEN_MS : dt)
       id = requestAnimationFrame(frame)
     }
     paint()
@@ -1447,8 +1316,10 @@ const GlobeStage = ({ running = true }) => {
     drag.current = {
       x: e.clientX,
       y: e.clientY,
-      kx: 360 / e.currentTarget.clientWidth,
-      ky: (TILT_MAX - TILT_MIN) / e.currentTarget.clientHeight,
+      /* the on-screen size, not clientWidth: the page may be scaled to fit,
+         and the pointer moves in screen pixels */
+      kx: 360 / e.currentTarget.getBoundingClientRect().width,
+      ky: (TILT_MAX - TILT_MIN) / e.currentTarget.getBoundingClientRect().height,
       t: e.timeStamp,
     }
     e.currentTarget.setPointerCapture(e.pointerId)
@@ -1505,8 +1376,8 @@ const GlobeStage = ({ running = true }) => {
       >
         <AssetGlobe
           landRef={landRef} lats={lats} mers={mers} sites={sites} pins={pins}
-          leads={leads} glows={glows} pulses={pulses} flows={flows}
-          nearPlane={nearPlane} farPlane={farPlane}
+          leads={leads} glows={glows} pulses={pulses} heads={heads} flows={flows}
+          nearHeli={nearHeli} farHeli={farHeli}
         />
         <AssetChips chips={chips} />
         {!touched && <span className="am-globe__hint" aria-hidden="true">Drag to rotate</span>}
@@ -1524,81 +1395,32 @@ const GlobeStage = ({ running = true }) => {
   )
 }
 
-/* =========================================================================
-   The sign-in half's night sky.
-
-   A fixed scatter rather than a random one: every position comes from a hash
-   of its index, so the field is identical on every render and every reload —
-   a sky that reshuffles when React re-renders reads as a glitch rather than
-   as stars. Each mote carries its own size, brightness, cycle and delay, so
-   the field breathes unevenly instead of pulsing as one, and a handful of
-   larger four-point flares carry the actual sparkle.
-
-   Every delay is negative, which starts each mote partway through its own
-   cycle: the sky is already alight on the first painted frame instead of
-   spending its first seconds warming up from black.
-   ========================================================================= */
-const scatter = (n) => {
-  const v = Math.sin(n * 12.9898) * 43758.5453
-  return v - Math.floor(v)
+/* Fixed to the screen, whatever the browser zoom. On a computer the page is
+   laid out at one design width and scaled to fill the window exactly. Browser
+   zoom only changes how many CSS pixels the window is wide, and the scale is
+   worked out from that same number, so zooming in or out cancels itself: the
+   page keeps the same size on screen and still follows the window when it is
+   resized. Its breakpoints are container queries on this box rather than media
+   queries on the window, so zoom can no longer trip the phone layout either.
+   Phones and tablets are left at scale 1 and keep their own responsive layout. */
+const FIT_W = 1440
+const fitBox = () => {
+  const w = window.innerWidth
+  const h = window.innerHeight
+  const desk = window.matchMedia('(hover: hover) and (pointer: fine)').matches
+  const s = desk ? w / FIT_W : 1
+  return { s, w: w / s, h: h / s }
 }
-
-const MOTES = Array.from({ length: 92 }, (_, i) => {
-  const cycle = 2.6 + scatter(i + 109.5) * 3.8
-  return {
-    left: (scatter(i + 1) * 100).toFixed(2),
-    top: (scatter(i + 31.7) * 100).toFixed(2),
-    size: (1.2 + scatter(i + 57.3) * 2.1).toFixed(2),
-    peak: (0.5 + scatter(i + 83.1) * 0.5).toFixed(2),
-    cycle: cycle.toFixed(2),
-    delay: (-scatter(i + 137.9) * cycle).toFixed(2),
-    /* a third of them burn deeper gold, so the field is not one flat colour */
-    deep: scatter(i + 163.3) > 0.66,
-  }
-})
-
-/* kept off the very edges, where a flare would sit half outside the panel */
-const FLARES = Array.from({ length: 11 }, (_, i) => {
-  const cycle = 4.5 + scatter(i + 293.6) * 4
-  return {
-    left: (7 + scatter(i + 211.4) * 86).toFixed(2),
-    top: (6 + scatter(i + 241.8) * 88).toFixed(2),
-    size: (9 + scatter(i + 269.2) * 9).toFixed(2),
-    cycle: cycle.toFixed(2),
-    delay: (-scatter(i + 317.1) * cycle).toFixed(2),
-  }
-})
-
-const StarField = () => (
-  <span className="am-sky" aria-hidden="true">
-    {MOTES.map((m, i) => (
-      <span
-        key={`mote-${i}`}
-        className={m.deep ? 'am-mote am-mote--deep' : 'am-mote'}
-        style={{
-          left: `${m.left}%`, top: `${m.top}%`, width: `${m.size}px`, height: `${m.size}px`,
-          '--peak': m.peak, '--cycle': `${m.cycle}s`, '--d': `${m.delay}s`,
-        }}
-      />
-    ))}
-    {FLARES.map((f, i) => (
-      <span
-        key={`flare-${i}`}
-        className="am-flare"
-        style={{
-          left: `${f.left}%`, top: `${f.top}%`, width: `${f.size}px`, height: `${f.size}px`,
-          '--cycle': `${f.cycle}s`, '--d': `${f.delay}s`,
-        }}
-      />
-    ))}
-  </span>
-)
-
-const TILES = [
-  { Icon: Boxes, title: 'Asset register', meta: 'Centralized records' },
-  { Icon: Wrench, title: 'Maintenance', meta: 'Service visibility' },
-  { Icon: ShieldCheck, title: 'Governance', meta: 'Controlled access' },
-]
+const useFit = () => {
+  const [box, setBox] = useState(fitBox)
+  useEffect(() => {
+    /* browser zoom fires resize too, since it changes the window's CSS size */
+    const on = () => setBox(fitBox())
+    window.addEventListener('resize', on)
+    return () => window.removeEventListener('resize', on)
+  }, [])
+  return box
+}
 
 export default function SignIn({ onSubmit, error, configured = true }) {
   const [email, setEmail] = useState('')
@@ -1608,6 +1430,7 @@ export default function SignIn({ onSubmit, error, configured = true }) {
   const [showIntro, setShowIntro] = useState(playIntro)
   const [ready, setReady] = useState(() => !playIntro())
   const emailRef = useRef(null)
+  const fit = useFit()
 
   const handOff = useCallback(() => {
     setReady(true)
@@ -1645,51 +1468,39 @@ export default function SignIn({ onSubmit, error, configured = true }) {
 
       {showIntro && <Intro onDone={handOff} />}
 
+      <div
+        className="am-fit"
+        style={{
+          width: `${fit.w}px`, height: `${fit.h}px`,
+          transform: fit.s === 1 ? 'none' : `scale(${fit.s})`,
+          '--vh': `${fit.h / 100}px`,
+        }}
+      >
       <div className={ready ? 'am-shell is-ready' : 'am-shell'}>
         <section className="am-brand" aria-label="Asset Management System overview">
-          <span className="am-arc am-arc--right" aria-hidden="true" />
-          <span className="am-arc am-arc--corner" aria-hidden="true" />
-          <span className="am-brand__hazard" aria-hidden="true" />
-
           <div className="am-brand__inner">
-            <div className="am-rise"><Brand /></div>
-
             <div className="am-brand__body am-rise">
-              <h1 className="am-hero">Know where every asset is—and what it needs next.</h1>
-              <p className="am-lede">
-                Keep equipment records, repairs, parts, and maintenance activity organized in one secure workspace.
-              </p>
+              <Wordmark />
 
               <div className="am-globe">
                 <GlobeStage running={ready} />
                 <span className="am-sr">
                   Live positions for every class of asset you register — heavy equipment,
-                  plant and tools, and IT and office equipment.
+                  tools, service vehicles, and computer and IT office equipment.
                 </span>
-              </div>
-
-              <div className="am-tiles" aria-label="Workspace capabilities">
-                {TILES.map(({ Icon, title, meta }) => (
-                  <article className="am-tile" key={title}>
-                    <span className="am-tile__icon" aria-hidden="true"><Icon size={15} /></span>
-                    <div>
-                      <div className="am-tile__title">{title}</div>
-                      <div className="am-tile__meta">{meta}</div>
-                    </div>
-                  </article>
-                ))}
               </div>
             </div>
           </div>
         </section>
 
         <section className="am-auth__panel" aria-label="Sign in">
-          <StarField />
-
           <form className="am-card" onSubmit={submit} aria-busy={busy}>
             <Brand mobile />
-            <span className="am-lock" aria-hidden="true"><LockKeyhole size={18} /></span>
-            <h2 className="am-card__title">Welcome back</h2>
+            <h2 className="am-card__title">
+              <span className="am-lock" aria-hidden="true"><span className="am-lock__icon" /></span>
+              <span className="am-card__title3d">Welcome to</span>
+              <img className="am-card__title-mark" src="/ams-mark.png" alt="AMS" />
+            </h2>
             <p className="am-card__note">Sign in with the account provided by your administrator.</p>
 
             {!configured && (
@@ -1759,10 +1570,11 @@ export default function SignIn({ onSubmit, error, configured = true }) {
             </button>
 
             <p className="am-assurance">
-              <ShieldCheck size={13} aria-hidden="true" /> Your access is protected and role-based.
+              <ShieldCheck size={17} aria-hidden="true" /> Your access is protected and role-based.
             </p>
           </form>
         </section>
+      </div>
       </div>
     </main>
   )
@@ -1770,18 +1582,24 @@ export default function SignIn({ onSubmit, error, configured = true }) {
 
 const styles = `
   .am-auth{
-    --gold-hi: var(--ams-yellow-hi);
-    --gold-lift: var(--ams-yellow-lift);
-    --gold: var(--ams-yellow);
-    --gold-deep: var(--ams-yellow-deep);
-    --gold-dim: var(--ams-yellow-dim);
-    --on-gold: var(--ams-on-yellow);
+    /* The sign-in screen runs on the brand red rather than the workspace's
+       yellow. It is a local scale, not a change to the --ams-* tokens, so the
+       authenticated app keeps its own palette. */
+    --accent-hi: #ff5a4f;
+    --accent-lift: #ff9a91;
+    --accent: #fb1f1f;
+    --accent-deep: #c4130f;
+    --accent-dim: #7a1512;
+    --on-accent: #ffffff;
     --ink: var(--ams-bg);
     --card: var(--ams-surface);
     --line: var(--ams-line);
     --text: var(--ams-text);
     --muted: var(--ams-mute);
     --dim: var(--ams-dim);
+    /* the fit box overrides this with its own height, so inside it every
+       "vh" is a share of the design box rather than of the zoomed window */
+    --vh: 1vh;
     min-height: 100vh;
     background: var(--ink);
     color: var(--text);
@@ -1789,10 +1607,11 @@ const styles = `
     -webkit-font-smoothing: antialiased;
   }
   .am-auth *{box-sizing:border-box}
+  .am-fit{position:fixed;left:0;top:0;transform-origin:0 0;overflow:auto;container:am / size}
 
   /* the gate stays out of the tab order until the intro hands over */
   .am-shell{
-    display:grid;grid-template-columns:50.7% 1fr;min-height:100vh;
+    display:grid;grid-template-columns:50.7% 1fr;min-height:calc(var(--vh) * 100);
     opacity:0;visibility:hidden;transform:translateY(10px);
     transition:opacity .6s ease,transform .6s ease,visibility 0s linear .6s;
   }
@@ -1801,12 +1620,20 @@ const styles = `
   /* ---------------- left: brand panel ---------------- */
   .am-brand{
     position:relative;overflow:hidden;padding:32px 56px 46px 80px;display:flex;flex-direction:column;
-    background:
-      radial-gradient(105% 78% at 18% 44%, rgba(255,205,17,.13), transparent 62%),
-      radial-gradient(85% 60% at 68% 6%, rgba(255,205,17,.10), transparent 66%),
-      radial-gradient(70% 55% at 8% 96%, rgba(255,205,17,.08), transparent 70%),
-      var(--ams-rail);
-    border-right:1px solid var(--line);
+    /* Flat black: the red light in this half comes from the globe and the
+       lockup, not from a wash painted behind them. */
+    background:var(--ams-rail);
+    z-index:1;
+  }
+  /* the edge itself: crisp, brightest at mid-height, fading out top and bottom */
+  .am-brand::after{
+    content:"";position:absolute;top:0;bottom:0;right:0;width:2px;z-index:3;pointer-events:none;
+    background:linear-gradient(180deg,
+      rgba(251,31,31,.28) 0%,
+      var(--accent) 14%,
+      var(--accent-hi) 50%,
+      var(--accent) 86%,
+      rgba(251,31,31,.28) 100%);
   }
   .am-brand__hazard{position:absolute;inset:0 0 auto 0;height:4px;background:var(--ams-hazard);z-index:2}
 
@@ -1817,31 +1644,61 @@ const styles = `
      and centres inside the pane: 642px is that column, 50.7% of 1536 less this
      panel's padding and divider, so nothing below 1536 moves. */
   .am-brand__inner{flex:1;display:flex;flex-direction:column;width:100%;max-width:642px;margin:0 auto}
-  .am-arc{position:absolute;border-radius:50%;border:1px solid rgba(255,205,17,.22);pointer-events:none}
-  .am-arc--right{width:412px;height:412px;right:-226px;top:50%;transform:translateY(-50%)}
-  .am-arc--right::after{
-    content:"";position:absolute;inset:-1px;border-radius:50%;
-    background:radial-gradient(closest-side,rgba(255,205,17,.08),transparent 72%);
-  }
-  .am-arc--corner{width:300px;height:300px;left:-196px;bottom:-128px;border-color:rgba(255,205,17,.18)}
-  .am-brand > *:not(.am-arc):not(.am-brand__hazard){position:relative;z-index:1}
+  .am-brand > *:not(.am-brand__hazard){position:relative;z-index:1}
 
   .am-mark{display:flex;align-items:center;gap:9px}
   /* The mark is the AMS emblem itself now. It is gold on a dark globe, so the
      filled gold badge it used to sit in would have swallowed it — the artwork
      carries its own shape and glow instead. */
-  .am-mark__badge{width:52px;height:52px;flex:0 0 auto;display:grid;place-items:center}
-  .am-mark__badge img{width:100%;height:100%;object-fit:contain;display:block}
-  .am-mark__name{font-weight:800;font-size:15.5px;letter-spacing:-.01em;color:var(--gold);line-height:1.2;margin:0}
-  .am-mark__sub{font-size:9.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim);margin:3px 0 0}
   .am-mark--mobile{display:none;margin-bottom:30px}
 
   .am-brand__body{margin-top:auto;margin-bottom:auto;max-width:626px;padding-top:26px}
-  .am-hero{
-    font-size:clamp(28px,2.35vw,36px);line-height:1.14;font-weight:800;letter-spacing:-.022em;margin:0 0 18px;
-    max-width:566px;
-    background:linear-gradient(96deg,var(--gold-hi) 6%,var(--gold) 52%,var(--gold-deep) 96%);
-    -webkit-background-clip:text;background-clip:text;color:transparent;
+  /* The lockup ships as art on transparency, so it sits on the panel's glow
+     without a black plate behind it. It is sized like the globe below — column,
+     ceiling, viewport height — so the two scale together instead of stepping at
+     breakpoints, but it is allowed to run 28px past the text column on each
+     side, which is why it is centred with left/translate rather than auto
+     margins: auto margins do not centre a box wider than its container. The
+     overhang stays inside the panel's own padding at every breakpoint. The
+     intrinsic width/height attributes reserve the row so the globe never jumps. */
+  .am-wordmark{
+    position:relative;left:50%;transform:translateX(-50%);
+    display:block;width:min(calc(100% + 56px),760px,calc(var(--vh) * 76));
+    margin:0 0 clamp(14px,calc(var(--vh) * 2.2),24px);
+  }
+  .am-wordmark__art{display:block;width:100%;height:auto}
+  /* in the phone header it sits inside the card: full card width, no
+     centring overhang. Doubled class so the width steps for the brand
+     panel, further down, cannot override it. */
+  .am-wordmark.am-wordmark--mobile{left:auto;transform:none;width:100%;margin:0}
+  /* Glass glaze: a soft diagonal highlight that slides across the lockup.
+     The PNG's own alpha masks it, so the shine rides the letters and the
+     badge rather than lighting an invisible rectangle around them; screen
+     blending keeps the red reading as red under the pass. */
+  .am-wordmark__glaze{
+    position:absolute;inset:0;overflow:hidden;pointer-events:none;
+    mix-blend-mode:screen;
+    -webkit-mask:url(/ams-brand.png) 0 0/100% 100% no-repeat;
+    mask:url(/ams-brand.png) 0 0/100% 100% no-repeat;
+  }
+  .am-wordmark__glaze::before{
+    content:'';position:absolute;top:-40%;bottom:-40%;left:0;width:26%;
+    background:linear-gradient(90deg,
+      rgba(255,255,255,0) 0%,
+      rgba(255,255,255,.30) 36%,
+      rgba(255,255,255,.85) 50%,
+      rgba(255,255,255,.30) 64%,
+      rgba(255,255,255,0) 100%);
+    filter:blur(3px);
+    transform:translateX(-130%) skewX(-18deg);
+    animation:am-glaze 5.5s linear infinite;
+  }
+  /* The pass crosses in the first third and the cycle rests for the other
+     two. Linear, because an eased sweep spends its time at the two ends —
+     off-canvas either side — and the glaze is only ever seen in the middle. */
+  @keyframes am-glaze{
+    0%{transform:translateX(-130%) skewX(-18deg)}
+    34%,100%{transform:translateX(430%) skewX(-18deg)}
   }
   .am-lede{margin:0;font-size:14.5px;line-height:1.62;color:var(--muted);max-width:486px}
 
@@ -1851,7 +1708,7 @@ const styles = `
      column, a ceiling, and the viewport height, so the graphic scales
      continuously instead of stepping at breakpoints; the chips then re-size
      themselves against the stage with container units. */
-  .am-globe{position:relative;width:min(100%,626px,64vh);margin:clamp(12px,2.4vh,28px) auto 0}
+  .am-globe{position:relative;width:min(100%,626px,calc(var(--vh) * 64));margin:clamp(12px,calc(var(--vh) * 2.4),28px) auto 0}
   .am-globe__stage{
     position:relative;width:100%;aspect-ratio:600/400;container-type:inline-size;
     cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none;border-radius:14px;
@@ -1868,56 +1725,71 @@ const styles = `
   /* The land, the sites and the chips are all positioned by the rAF pass in
      GlobeStage — opacity and transform here would fight it. What stays in CSS
      is everything that does not depend on the rotation. */
-  .am-land{fill:url(#am-dots)}
+  /* see-through, so the cage and the far side read as round the mark */
+  .am-land{opacity:.82}
   /* the pass scales the texture about the sphere's centre when the globe is
      leaned, so the transform needs that origin rather than the element's box */
   .am-land__spin{transform-box:view-box;transform-origin:300px 200px}
   /* no opacity transition on the chips or the caption: the pass already writes
      a fresh value every frame, so a transition only lags behind the rotation */
 
-  .am-wire{fill:none;stroke:rgba(255,205,17,.16);stroke-width:.9}
-  .am-wire--eq{stroke:rgba(255,205,17,.26);stroke-width:1.1}
-  .am-rim{fill:none;stroke:rgba(255,205,17,.42);stroke-width:1.2}
+  .am-wire{fill:none;stroke:rgba(251,31,31,.16);stroke-width:.9}
+  .am-wire--eq{stroke:rgba(251,31,31,.26);stroke-width:1.1}
+  .am-rim{fill:none;stroke:rgba(251,31,31,.42);stroke-width:1.2}
 
-  .am-orbit{fill:none;stroke:rgba(255,205,17,.16);stroke-width:1;stroke-dasharray:2.5 7}
+  .am-orbit{fill:none;stroke:rgba(251,31,31,.16);stroke-width:1;stroke-dasharray:2.5 7}
 
-  /* the aircraft on that orbit: lit and solid on the near leg, dimmed on the
-     far one so the two copies read as one machine going round the back */
-  .am-plane__body{fill:var(--gold-hi);stroke:rgba(10,12,14,.5);stroke-width:.5;stroke-linejoin:round}
-  .am-plane__trail{fill:none;stroke:rgba(255,205,17,.42);stroke-width:1.5;stroke-linecap:round;stroke-dasharray:5 4}
-  .am-plane--far .am-plane__body{fill:rgba(255,205,17,.4);stroke:none}
-  .am-plane--far .am-plane__trail{stroke:rgba(255,205,17,.15)}
+  /* the helicopter on that orbit: lit and solid on the near leg, dimmed on
+     the far one so the two copies read as one machine going round the back */
+  .am-heli__body{fill:var(--accent-hi);stroke:rgba(10,12,14,.55);stroke-width:.5;stroke-linejoin:round}
+  .am-heli__glass{fill:rgba(255,226,222,.85);stroke:rgba(10,12,14,.45);stroke-width:.4}
+  .am-heli__skid{fill:none;stroke:rgba(255,120,110,.8);stroke-width:.9;stroke-linecap:round}
+  .am-heli__disc{fill:rgba(255,190,184,.1);stroke:rgba(255,190,184,.22);stroke-width:.5}
+  .am-heli__blade{fill:none;stroke:rgba(255,236,232,.92);stroke-width:1.3;stroke-linecap:round}
+  .am-heli__hub{fill:#fff;stroke:rgba(10,12,14,.5);stroke-width:.4}
+  .am-heli__tail{fill:rgba(255,236,232,.9)}
+  /* the rotors spin about their own hub: in SVG a CSS transform's origin is
+     the element's own 0,0, and each rotor is drawn centred there */
+  .am-heli__rotor{animation:am-rotor .22s linear infinite}
+  @keyframes am-rotor{to{transform:rotate(360deg)}}
+  .am-heli__tail{animation:am-tail .09s linear infinite alternate}
+  @keyframes am-tail{from{transform:scaleX(1)}to{transform:scaleX(.25)}}
+  .am-heli--far .am-heli__body{fill:rgba(251,31,31,.4);stroke:none}
+  .am-heli--far .am-heli__glass,.am-heli--far .am-heli__skid,.am-heli--far .am-heli__hub{opacity:.35}
+  .am-heli--far .am-heli__blade{stroke:rgba(255,190,184,.35)}
+  .am-heli--far .am-heli__disc{fill:rgba(255,190,184,.04);stroke:rgba(255,190,184,.1)}
 
   /* pathLength="100" normalises every run, so one keyframe drives them all */
-  .am-flow{fill:none;stroke:rgba(255,205,17,.34);stroke-width:1.1;stroke-dasharray:3.5 5}
+  .am-flow{fill:none;stroke:rgba(251,31,31,.34);stroke-width:1.1;stroke-dasharray:3.5 5}
   .am-flow__halo{
-    fill:none;stroke:rgba(255,205,17,.28);stroke-width:9;stroke-linecap:round;
+    fill:none;stroke:rgba(251,31,31,.28);stroke-width:9;stroke-linecap:round;
     stroke-dasharray:.9 99.1;animation:am-run 3.6s linear infinite var(--d,0s);
   }
   .am-flow__hot{
-    fill:none;stroke:var(--gold-hi);stroke-width:3.6;stroke-linecap:round;
+    fill:none;stroke:var(--accent-hi);stroke-width:3.6;stroke-linecap:round;
     stroke-dasharray:1.1 98.9;animation:am-run 3.6s linear infinite var(--d,0s);
   }
   @keyframes am-run{to{stroke-dashoffset:-100}}
 
-  .am-lead__glow{fill:none;stroke:rgba(255,205,17,.13);stroke-width:4.5;stroke-linecap:round}
+  .am-lead__glow{fill:none;stroke:rgba(251,31,31,.13);stroke-width:4.5;stroke-linecap:round}
   .am-lead{
-    fill:none;stroke:rgba(255,205,17,.4);stroke-width:1;stroke-dasharray:3 4;
+    fill:none;stroke:rgba(251,31,31,.4);stroke-width:1;stroke-dasharray:3 4;
     animation:am-march 1.8s linear infinite;
   }
   @keyframes am-march{to{stroke-dashoffset:-14}}
   /* the charge runs from the pin toward the chip, so the tether reads as a
      live link rather than a drawn line */
+  .am-lead__head{fill:#fff;filter:drop-shadow(0 0 4px var(--accent-hi)) drop-shadow(0 0 9px rgba(251,31,31,.9))}
   .am-lead__pulse{
-    fill:none;stroke:var(--gold-hi);stroke-width:3.2;stroke-linecap:round;
+    fill:none;stroke:var(--accent-hi);stroke-width:3.2;stroke-linecap:round;
     stroke-dasharray:1.6 98.4;animation:am-run 2.6s linear infinite var(--d,0s);
   }
 
   .am-pin__glow{fill:url(#am-pin-glow)}
-  .am-pin__dot{fill:var(--gold)}
-  .am-pin__ring{fill:none;stroke:rgba(255,205,17,.45);stroke-width:1}
+  .am-pin__dot{fill:var(--accent)}
+  .am-pin__ring{fill:none;stroke:rgba(251,31,31,.45);stroke-width:1}
   .am-pin__ping{
-    fill:none;stroke:rgba(255,205,17,.6);stroke-width:1.4;opacity:0;
+    fill:none;stroke:rgba(251,31,31,.6);stroke-width:1.4;opacity:0;
     transform-box:fill-box;transform-origin:center;
     animation:am-ping 2.8s cubic-bezier(.2,.7,.4,1) infinite var(--d,0s);
   }
@@ -1929,7 +1801,7 @@ const styles = `
   }
 
   /* ---- asset chips (HTML, over the SVG) ---- */
-  .am-chip{pointer-events:none;
+  .am-chip{pointer-events:none;will-change:transform,opacity;
     position:absolute;width:27.5%;transform:translateY(-50%);
     display:flex;align-items:center;gap:1.6cqw;
     padding:1.3cqw 1.7cqw;border-radius:2cqw;
@@ -1938,10 +1810,14 @@ const styles = `
   }
   .am-chip__badge{
     flex:0 0 auto;width:5.2cqw;height:5.2cqw;border-radius:1.5cqw;display:grid;place-items:center;
-    background:var(--gold);color:var(--on-gold);box-shadow:0 .35cqw 0 var(--gold-dim);
+    background:var(--accent);color:var(--on-accent);box-shadow:0 .35cqw 0 var(--accent-dim);
   }
-  .am-chip__badge svg{display:block;width:72%;height:72%}
-  .am-chip__gl{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  /* the icon is a black silhouette on transparent, so it masks the badge's
+     own ink rather than being shown as-is */
+  .am-chip__gl{
+    display:block;width:74%;height:74%;background:currentColor;
+    -webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat;
+  }
   .am-chip__txt{min-width:0}
   .am-chip__name{
     display:block;font-size:clamp(8.6px,2.16cqw,12.4px);font-weight:700;color:var(--text);
@@ -1952,6 +1828,12 @@ const styles = `
     letter-spacing:.08em;color:var(--dim);line-height:1.3;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   }
+  .am-chip__status{display:flex;align-items:center;gap:.8cqw;margin-top:.15cqw;color:var(--text)}
+  .am-chip__status::before{
+    content:"";flex:0 0 auto;width:.95cqw;height:.95cqw;min-width:4px;min-height:4px;border-radius:50%;
+  }
+  .am-chip__status--operational::before{background:#34d399;box-shadow:0 0 5px rgba(52,211,153,.7)}
+  .am-chip__status--available::before{background:#60a5fa;box-shadow:0 0 5px rgba(96,165,250,.7)}
   /* on a narrow stage the site line is below reading size, so it goes */
   @container (max-width:430px){
     .am-chip__meta{display:none}
@@ -1960,87 +1842,80 @@ const styles = `
 
   .am-globe__cap{position:relative;height:13px;margin:18px 0 0;overflow:hidden}
   .am-globe__dot{
-    width:5px;height:5px;border-radius:50%;flex:0 0 auto;background:var(--gold);
-    box-shadow:0 0 9px rgba(255,205,17,.8);animation:am-beat 2.4s ease-in-out infinite;
+    width:5px;height:5px;border-radius:50%;flex:0 0 auto;background:var(--accent);
+    box-shadow:0 0 9px rgba(251,31,31,.8);animation:am-beat 2.4s ease-in-out infinite;
   }
   @keyframes am-beat{0%,100%{opacity:.35}50%{opacity:1}}
   .am-globe__cap .am-cls{
     position:absolute;left:0;right:0;top:0;height:13px;
     display:flex;align-items:center;justify-content:center;gap:9px;line-height:13px;
-    font-size:10px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;color:var(--gold);
+    font-size:10px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;color:var(--accent);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   }
-
-  .am-tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:clamp(10px,1.8vh,20px);max-width:626px}
-  .am-tile{
-    display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:10px;
-    border:1px solid var(--line);background:var(--ams-surface);
-  }
-  .am-tile__icon{
-    width:28px;height:28px;border-radius:8px;display:grid;place-items:center;flex:0 0 auto;
-    background:var(--gold);color:var(--on-gold);box-shadow:0 2px 0 var(--gold-dim);
-  }
-  .am-tile__title{font-size:11.5px;font-weight:700;color:var(--text);margin-bottom:2px;line-height:1.15}
-  .am-tile__meta{font-size:9.5px;color:var(--dim);line-height:1.15}
 
   /* ---------------- right: auth panel ---------------- */
   .am-auth__panel{
     position:relative;padding:40px;display:flex;flex-direction:column;justify-content:center;
-    background:
-      radial-gradient(60% 45% at 96% 88%, rgba(255,205,17,.09), transparent 68%),
-      radial-gradient(55% 40% at 4% 96%, rgba(255,205,17,.07), transparent 70%),
-      var(--ink);
+    background:#ffffff;
   }
-  /* The star field sits behind the card: both are positioned, and the card
-     comes later in the DOM, so it paints on top without needing a z-index.
-     The reduced-motion block at the end of this sheet stills the whole thing,
-     which leaves a fixed field rather than an empty one. */
-  .am-sky{position:absolute;inset:0;overflow:hidden;pointer-events:none}
-  .am-mote{
-    position:absolute;border-radius:50%;background:var(--gold-lift);
-    box-shadow:0 0 7px rgba(255,205,17,.85),0 0 14px rgba(255,205,17,.35);
-    opacity:calc(var(--peak,.7) * .5);
-    animation:am-twinkle var(--cycle,4s) ease-in-out infinite var(--d,0s);
-  }
-  .am-mote--deep{background:var(--gold);box-shadow:0 0 7px rgba(255,205,17,.6)}
-  @keyframes am-twinkle{
-    0%,100%{opacity:calc(var(--peak,.7) * .42);transform:scale(.78)}
-    50%{opacity:var(--peak,.7);transform:scale(1.06)}
-  }
-  /* four tapered points rather than another dot — this is the bit that reads
-     as a sparkle, so it turns slightly as it flares and then gets out of the
-     way for most of its cycle */
-  .am-flare{
-    position:absolute;background:var(--gold-lift);opacity:0;
-    clip-path:polygon(50% 0,57% 43%,100% 50%,57% 57%,50% 100%,43% 57%,0 50%,43% 43%);
-    filter:drop-shadow(0 0 7px rgba(255,205,17,.95));
-    animation:am-sparkle var(--cycle,6s) ease-in-out infinite var(--d,0s);
-  }
-  @keyframes am-sparkle{
-    0%,90%,100%{opacity:0;transform:scale(.3) rotate(0deg)}
-    14%{opacity:1;transform:scale(1) rotate(26deg)}
-    36%{opacity:.45;transform:scale(.78) rotate(48deg)}
-    58%{opacity:.92;transform:scale(.96) rotate(70deg)}
-    78%{opacity:.2;transform:scale(.5) rotate(92deg)}
-  }
+  /* The frame takes its shape from the AMS mark, which is built from slanted
+     cuts: two opposite corners are sheared off on the diagonal, the other two
+     stay square and carry a bracket each, like a sight picking out the panel.
 
+     The border is not a CSS border — a border cannot follow a clip-path's
+     diagonal. The card's own background is the frame: brand red, with a bright
+     arc of light that travels round it. The ::before is the dark face laid
+     over it 2px in, cut to the same shape, so only a 2px ring of the frame
+     shows, diagonals included. */
+  @property --am-spin{syntax:"<angle>";inherits:false;initial-value:0deg}
   .am-card{
-    position:relative;width:100%;max-width:486px;margin:0 auto;padding:28px 40px 30px;
-    border-radius:14px;border:1px solid var(--line);border-top:3px solid var(--gold);
-    background:var(--card);box-shadow:0 30px 70px rgba(0,0,0,.6);overflow:hidden;
+    --cut:26px;
+    position:relative;width:100%;max-width:486px;margin:0 auto;padding:30px 40px 32px;
+    border:0;border-radius:0;overflow:hidden;
+    clip-path:polygon(var(--cut) 0,100% 0,100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,0 100%,0 var(--cut));
+    background:
+      conic-gradient(from var(--am-spin),transparent 0 62%,rgba(255,255,255,.95) 72%,var(--accent-hi) 76%,transparent 86%),
+      linear-gradient(135deg,var(--accent-hi),var(--accent) 45%,var(--accent-deep));
   }
   .am-card::before{
-    content:"";position:absolute;inset:0;pointer-events:none;
-    background:linear-gradient(118deg,rgba(255,205,17,.05),rgba(255,205,17,0) 42%);
+    --in:calc(var(--cut) - 1px);
+    content:"";position:absolute;inset:2px;pointer-events:none;
+    clip-path:polygon(var(--in) 0,100% 0,100% calc(100% - var(--in)),calc(100% - var(--in)) 100%,0 100%,0 var(--in));
+    background:
+      linear-gradient(118deg,rgba(251,31,31,.07),rgba(251,31,31,0) 42%),
+      var(--card);
+  }
+  /* the brackets on the two square corners, set just inside the frame */
+  .am-card::after{
+    --b:var(--accent-hi);
+    content:"";position:absolute;inset:9px;pointer-events:none;
+    background:
+      linear-gradient(var(--b),var(--b)) top right/20px 2px no-repeat,
+      linear-gradient(var(--b),var(--b)) top right/2px 20px no-repeat,
+      linear-gradient(var(--b),var(--b)) bottom left/20px 2px no-repeat,
+      linear-gradient(var(--b),var(--b)) bottom left/2px 20px no-repeat;
   }
   .am-card > *{position:relative}
 
   .am-lock{
-    width:38px;height:38px;border-radius:10px;display:grid;place-items:center;
-    background:var(--gold);color:var(--on-gold);box-shadow:0 3px 0 var(--gold-dim);
+    flex:0 0 auto;width:38px;height:38px;border-radius:10px;display:grid;place-items:center;
+    background:var(--accent);color:var(--on-accent);box-shadow:0 3px 0 var(--accent-dim);
   }
-  .am-card__title{font-size:27px;font-weight:800;letter-spacing:-.02em;margin:17px 0 7px;color:var(--gold)}
-  .am-card__note{margin:0 0 21px;font-size:12.5px;color:var(--muted)}
+  /* the artwork is a black glyph on transparent, so it masks the badge's own
+     ink rather than being shown as-is — same technique as the globe chips */
+  .am-lock__icon{
+    display:block;width:20px;height:20px;background:var(--on-accent);
+    -webkit-mask:url("/security.png") center/contain no-repeat;
+    mask:url("/security.png") center/contain no-repeat;
+  }
+  .am-card__title{
+    display:flex;align-items:center;flex-wrap:wrap;gap:.32em;
+    font-size:27px;font-weight:800;letter-spacing:-.02em;margin:17px 0 7px;
+  }
+  .am-card__title .am-lock{margin-right:.15em}
+  .am-card__title3d{color:var(--accent)}
+  .am-card__title-mark{height:.82em;width:auto;display:block;filter:drop-shadow(0 2px 3px rgba(0,0,0,.4))}
+  .am-card__note{margin:0 0 21px;font-size:12.5px;color:#fff}
 
   .am-alert{
     display:flex;align-items:flex-start;gap:9px;margin-bottom:17px;padding:11px 13px;border-radius:8px;
@@ -2051,7 +1926,7 @@ const styles = `
   .am-field + .am-field{margin-top:17px}
   .am-field label{
     display:block;font-size:9.5px;font-weight:700;letter-spacing:.19em;text-transform:uppercase;
-    color:var(--gold);margin-bottom:8px;
+    color:var(--accent);margin-bottom:8px;
   }
   /* White fields on a dark card. What someone types has to be the most
      legible thing on the screen, so the value is near-black and everything
@@ -2062,8 +1937,8 @@ const styles = `
     transition:border-color .18s ease,box-shadow .18s ease;
   }
   .am-input:focus-within{
-    border-color:var(--gold-deep);
-    box-shadow:inset 0 1px 2px rgba(9,11,14,.1),0 0 0 3px rgba(255,205,17,.32);
+    border-color:var(--accent-deep);
+    box-shadow:inset 0 1px 2px rgba(9,11,14,.1),0 0 0 3px rgba(251,31,31,.32);
   }
   .am-input__lead{position:absolute;left:14px;color:#79808c}
   .am-input input{
@@ -2085,25 +1960,27 @@ const styles = `
     position:absolute;right:10px;background:none;border:0;cursor:pointer;padding:6px;
     color:#79808c;display:grid;place-items:center;border-radius:6px;transition:color .18s ease;
   }
-  .am-reveal:hover{color:var(--gold-deep)}
+  .am-reveal:hover{color:var(--accent-deep)}
 
   /* Glass rather than a painted slab: a translucent gold pane, a lit rim, and
      a glaze curving across the top the way light sits on glass. The backdrop
      filter picks up what is behind it, which is what stops it reading as a
      flat gradient. */
+  /* A solid, saturated red rather than the translucent glass this used to
+     be: the fill is opaque brand red top to bottom, so the button reads as
+     the loudest red thing on the page, with a bright glaze across the top
+     and an outer glow in the same red to make it feel lit rather than flat. */
   .am-submit{
     position:relative;overflow:hidden;isolation:isolate;
     width:100%;margin-top:23px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:9px;
-    font-family:inherit;font-size:13.5px;font-weight:800;color:var(--on-gold);
-    padding:14px 20px;border-radius:10px;border:1px solid rgba(255,236,150,.5);
-    background:linear-gradient(180deg,rgba(255,216,60,.95) 0%,rgba(255,201,12,.8) 46%,rgba(206,155,0,.94) 100%);
-    -webkit-backdrop-filter:blur(12px) saturate(150%);
-            backdrop-filter:blur(12px) saturate(150%);
+    font-family:inherit;font-size:14px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--on-accent);
+    padding:15px 20px;border-radius:10px;border:1px solid var(--accent-hi);
+    background:linear-gradient(180deg,var(--accent-hi) 0%,var(--accent) 48%,var(--accent-deep) 100%);
     box-shadow:
       inset 0 1px 0 rgba(255,255,255,.85),
-      inset 0 -1px 0 rgba(120,86,0,.4),
-      0 10px 26px rgba(255,205,17,.2),
-      0 2px 8px rgba(0,0,0,.34);
+      inset 0 -1px 0 rgba(92,8,6,.5),
+      0 14px 32px rgba(251,31,31,.45),
+      0 3px 10px rgba(0,0,0,.4);
     transition:box-shadow .18s ease,transform .1s ease,filter .18s ease;
   }
   .am-submit::before{
@@ -2111,69 +1988,44 @@ const styles = `
     background:linear-gradient(180deg,rgba(255,255,255,.46),rgba(255,255,255,.08) 62%,rgba(255,255,255,0));
     border-radius:9px 9px 40% 40% / 9px 9px 16px 16px;
   }
-  /* The glint: a narrow, angled band of light that travels across the pane and
-     then waits off-stage for the rest of the cycle, so it reads as light
-     catching glass rather than a strobe. It is clipped by the button's own
-     overflow, and sits under the label, which carries z-index 1. */
-  .am-submit::after{
-    content:"";position:absolute;top:-60%;bottom:-60%;left:0;width:30%;pointer-events:none;
-    background:linear-gradient(
-      90deg,
-      rgba(255,255,255,0),
-      rgba(255,255,255,.5) 42%,
-      rgba(255,255,255,.92) 52%,
-      rgba(255,255,255,.42) 62%,
-      rgba(255,255,255,0)
-    );
-    filter:blur(2px);
-    transform:translateX(-220%) rotate(18deg);
-    animation:am-glint 4.6s cubic-bezier(.55,.05,.3,1) .9s infinite;
-  }
-  @keyframes am-glint{
-    0%{transform:translateX(-220%) rotate(18deg)}
-    /* the pass itself is the first third; the rest of the cycle is the wait,
-       spent off the right-hand edge where the jump back is invisible */
-    34%,100%{transform:translateX(460%) rotate(18deg)}
-  }
-  .am-submit:hover:not(:disabled)::after{animation-duration:2.2s;animation-delay:0s}
-  .am-submit:disabled::after{animation:none;opacity:0}
-
-  /* the label and spinner ride above the glaze */
+  /* the label and spinner ride above the top gloss */
   .am-submit > *{position:relative;z-index:1}
   .am-submit:hover:not(:disabled){
-    filter:brightness(1.06);
+    filter:brightness(1.08) saturate(1.1);
     box-shadow:
       inset 0 1px 0 rgba(255,255,255,.9),
-      inset 0 -1px 0 rgba(120,86,0,.4),
-      0 12px 30px rgba(255,205,17,.3),
-      0 2px 8px rgba(0,0,0,.34);
+      inset 0 -1px 0 rgba(92,8,6,.5),
+      0 18px 40px rgba(251,31,31,.6),
+      0 3px 10px rgba(0,0,0,.4);
   }
   .am-submit:active:not(:disabled){
     transform:translateY(1.5px);
-    box-shadow:inset 0 1px 0 rgba(255,255,255,.5),inset 0 2px 6px rgba(120,86,0,.35),0 4px 12px rgba(255,205,17,.16);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.5),inset 0 2px 6px rgba(92,8,6,.45),0 6px 16px rgba(251,31,31,.35);
   }
   .am-submit:disabled{opacity:.55;cursor:not-allowed}
   .am-spinner{
-    width:15px;height:15px;border:2px solid rgba(11,13,15,.3);border-top-color:var(--on-gold);
+    width:15px;height:15px;border:2px solid rgba(255,255,255,.35);border-top-color:var(--on-accent);
     border-radius:50%;animation:am-spin 700ms linear infinite;
   }
   @keyframes am-spin{to{transform:rotate(360deg)}}
 
-  .am-assurance{display:flex;align-items:center;justify-content:center;gap:7px;margin:18px 0 0;font-size:11px;color:var(--dim)}
+  .am-assurance{display:flex;align-items:center;justify-content:center;gap:7px;margin:18px 0 0;font-size:13.5px;color:#fff}
 
-  .am-auth :focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+  .am-auth :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
   .am-rise{opacity:0;transform:translateY(10px);animation:am-rise .7s cubic-bezier(.22,.8,.3,1) forwards}
   .am-rise + .am-rise{animation-delay:.06s}
-  .am-card{animation:am-rise .8s cubic-bezier(.22,.8,.3,1) .1s both}
+  .am-card{animation:am-rise .8s cubic-bezier(.22,.8,.3,1) .1s both,am-frame 5s linear infinite}
+  /* the arc of light doing its lap of the frame */
+  @keyframes am-frame{to{--am-spin:360deg}}
   @keyframes am-rise{to{opacity:1;transform:none}}
 
   /* ===================== intro ===================== */
   .am-intro{
     display:grid;place-items:center;position:fixed;inset:0;z-index:60;
     background:
-      radial-gradient(72% 58% at 50% 40%, rgba(255,205,17,.10), transparent 68%),
-      radial-gradient(52% 42% at 10% 94%, rgba(255,205,17,.07), transparent 72%),
+      radial-gradient(72% 58% at 50% 40%, rgba(251,31,31,.10), transparent 68%),
+      radial-gradient(52% 42% at 10% 94%, rgba(251,31,31,.07), transparent 72%),
       var(--ams-bg);
     transition:opacity .62s ease, transform .62s ease, filter .62s ease;
   }
@@ -2181,8 +2033,8 @@ const styles = `
   .am-intro__grid{
     position:absolute;inset:0;pointer-events:none;
     background-image:
-      linear-gradient(rgba(255,205,17,.05) 1px,transparent 1px),
-      linear-gradient(90deg,rgba(255,205,17,.05) 1px,transparent 1px);
+      linear-gradient(rgba(251,31,31,.05) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(251,31,31,.05) 1px,transparent 1px);
     background-size:92px 92px;
     -webkit-mask-image:radial-gradient(66% 62% at 50% 44%,#000 28%,transparent 78%);
             mask-image:radial-gradient(66% 62% at 50% 44%,#000 28%,transparent 78%);
@@ -2191,8 +2043,8 @@ const styles = `
 
   .am-intro__title{
     margin:0;font-weight:800;font-size:clamp(24px,4.55vw,58px);line-height:1;letter-spacing:.005em;
-    color:var(--gold);display:flex;flex-wrap:wrap;align-items:flex-end;
-    text-shadow:0 0 38px rgba(255,205,17,.18);
+    color:var(--accent);display:flex;flex-wrap:wrap;align-items:flex-end;
+    text-shadow:0 0 38px rgba(251,31,31,.18);
   }
   .am-wd{display:inline-flex}
   .am-lw{display:inline-block;overflow:hidden;padding:.06em .012em .1em}
@@ -2201,7 +2053,7 @@ const styles = `
   .am-sp{display:inline-block;width:.34em}
 
   .am-band{position:relative;margin-top:clamp(10px,1.4vw,20px);height:calc(var(--rigH) * .909)}
-  .am-rule{position:absolute;left:0;right:0;bottom:0;height:1px;background:rgba(255,205,17,.2)}
+  .am-rule{position:absolute;left:0;right:0;bottom:0;height:1px;background:rgba(251,31,31,.2)}
   /* The line and the machine both ride transforms now, rather than width and
      left: those are layout properties, and animating them re-laid-out the
      rig's whole SVG every frame. A transform stays on the compositor, which
@@ -2209,8 +2061,8 @@ const styles = `
   .am-grade{
     position:absolute;left:0;bottom:0;height:2px;width:100%;transform-origin:left center;
     transform:scaleX(var(--grade-from,0));
-    background:linear-gradient(90deg,rgba(255,205,17,0),var(--gold) 55%,var(--gold-hi));
-    box-shadow:0 0 16px rgba(255,205,17,.55);
+    background:linear-gradient(90deg,rgba(251,31,31,0),var(--accent) 55%,var(--accent-hi));
+    box-shadow:0 0 16px rgba(251,31,31,.55);
   }
   .am-grade.is-go{animation:am-grade var(--travel-dur,2600ms) cubic-bezier(.65,0,.35,1) var(--travel-delay,420ms) both}
   .am-grade.is-full{transform:scaleX(1)}
@@ -2234,13 +2086,13 @@ const styles = `
   }
   .am-rig__glow{
     position:absolute;left:50%;bottom:-14%;width:210%;padding-bottom:150%;transform:translateX(-50%);pointer-events:none;
-    background:radial-gradient(closest-side,rgba(255,205,17,.15),transparent 70%);
+    background:radial-gradient(closest-side,rgba(251,31,31,.15),transparent 70%);
   }
   .am-exc{position:relative;display:block;width:100%;height:auto;overflow:visible}
 
   .am-caption{display:flex;align-items:center;gap:11px;margin:18px 0 0;opacity:0;transform:translateY(6px);transition:opacity .5s ease,transform .5s ease}
   .am-intro.is-done .am-caption{opacity:1;transform:none}
-  .am-caption__dot{width:6px;height:6px;border-radius:50%;background:var(--gold);box-shadow:0 0 10px rgba(255,205,17,.8)}
+  .am-caption__dot{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px rgba(251,31,31,.8)}
   .am-caption__txt{font-size:clamp(9px,1vw,11px);letter-spacing:.32em;text-transform:uppercase;color:var(--dim)}
 
   .am-skip{
@@ -2248,15 +2100,15 @@ const styles = `
     font-family:inherit;font-size:10.5px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;
     color:var(--dim);transition:color .2s ease;
   }
-  .am-skip:hover{color:var(--gold)}
+  .am-skip:hover{color:var(--accent)}
   .am-sound{
     position:fixed;left:22px;bottom:20px;z-index:61;display:inline-flex;align-items:center;gap:8px;
     background:none;border:0;cursor:pointer;padding:8px 4px;font-family:inherit;font-size:10.5px;
     font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);transition:color .2s ease;
   }
-  .am-sound:hover,.am-sound[aria-pressed="true"]{color:var(--gold)}
+  .am-sound:hover,.am-sound[aria-pressed="true"]{color:var(--accent)}
   /* autoplay was refused - draw the eye, since one click anywhere fixes it */
-  .am-sound.is-blocked{color:var(--gold);animation:am-nudge 1.6s ease-in-out infinite}
+  .am-sound.is-blocked{color:var(--accent);animation:am-nudge 1.6s ease-in-out infinite}
   @keyframes am-nudge{0%,100%{opacity:.55}50%{opacity:1}}
   .am-skip kbd{font:inherit;letter-spacing:.08em;margin-left:8px;padding:2px 6px;border:1px solid var(--line);border-radius:4px;color:var(--dim)}
 
@@ -2293,20 +2145,38 @@ const styles = `
     100%{opacity:0;transform:translate(-42px,-20px) scale(1.7)}
   }
 
-  /* ---------------- responsive ---------------- */
-  @media (max-width:1120px){
+  /* ---------------- responsive ----------------
+     These ask the fit box, not the window. On a computer the box is always
+     FIT_W wide, so the width steps never fire there however far the page is
+     zoomed, and the height steps follow the window's shape rather than its
+     zoom. On a phone or tablet the box is simply the window, so they behave
+     as ordinary breakpoints. */
+  @container am (max-width:1120px){
     .am-brand{padding:30px 34px 40px 44px}
+    /* the panel's side padding shrinks here, so the lockup gives up its
+       overhang rather than running into the panel edge */
+    .am-wordmark{width:min(100%,760px,calc(var(--vh) * 76))}
     .am-auth__panel{padding:32px 28px}
     .am-card{padding:28px 30px 30px}
-    .am-tiles{gap:11px}
   }
-  @media (max-width:900px){
+  /* a genuinely narrow screen: one column, sign-in only */
+  @container am (max-width:760px){
     .am-shell{grid-template-columns:1fr}
     .am-brand{display:none}
     .am-mark--mobile{display:flex}
-    .am-auth__panel{min-height:100vh;padding:28px 22px 44px}
+    .am-auth__panel{min-height:calc(var(--vh) * 100);padding:28px 22px 44px}
     .am-card{padding:26px 22px 28px}
     .am-card__title{font-size:24px}
+  }
+  @container am (max-width:560px){
+    .am-auth__panel{align-items:flex-start;padding:18px 14px}
+    .am-card{max-width:none;padding:26px 20px 28px}
+    .am-lock{display:none}
+    .am-card__title{font-size:21px}
+  }
+  /* the intro plays over the window, outside the fit box, so it keeps
+     ordinary media queries */
+  @media (max-width:760px){
     .am-stage{--rigW:clamp(150px,42vw,220px);width:90vw}
     .am-intro__title{font-size:clamp(15px,5.3vw,30px)}
     .am-skip{right:14px;bottom:12px}
@@ -2314,41 +2184,31 @@ const styles = `
     .am-sound{left:14px;bottom:12px}
     .am-sound span{display:none}
   }
-  @media (max-width:560px){
-    .am-auth__panel{align-items:flex-start;padding:18px 14px}
-    .am-card{max-width:none;padding:26px 20px 28px;border-radius:12px}
-    .am-lock{display:none}
-    .am-card__title{font-size:21px}
-  }
 
-  /* Short viewports: the globe is already sized against vh, so these only
-     tighten the copy around it; below 600px tall it steps aside entirely. */
-  @media (max-height:900px){
+  /* Short boxes: the globe is already sized against the box height, so these
+     only tighten the copy around it; below 600px tall it steps aside. */
+  @container am (max-height:900px){
     .am-brand{padding-top:26px;padding-bottom:34px}
     .am-brand__body{padding-top:12px}
-    .am-hero{margin-bottom:13px}
   }
-  @media (max-height:790px){
-    .am-hero{font-size:clamp(24px,2vw,30px)}
+  @container am (max-height:790px){
     .am-lede{font-size:13.5px}
     .am-globe__cap{margin-top:7px}
   }
   /* A laptop viewport has to fit a taller globe now, so the frame around it
      gives up its slack before the graphic does. */
-  @media (max-height:720px){
+  @container am (max-height:720px){
     .am-brand{padding-top:20px;padding-bottom:24px}
-    .am-globe{margin-top:clamp(6px,1.2vh,14px)}
+    .am-globe{margin-top:clamp(6px,calc(var(--vh) * 1.2),14px)}
     .am-globe__cap{margin-top:10px}
-    .am-tiles{margin-top:10px}
     .am-auth__panel{padding:26px 32px}
   }
-  @media (max-height:640px){
+  @container am (max-height:640px){
     .am-brand{padding-top:16px;padding-bottom:18px}
     .am-auth__panel{padding:20px 28px}
   }
-  @media (max-height:600px){
+  @container am (max-height:600px){
     .am-globe{display:none}
-    .am-tiles{margin-top:26px}
   }
 
   @media (prefers-reduced-motion:reduce){

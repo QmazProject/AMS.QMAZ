@@ -1,4 +1,5 @@
 import { useState, useEffect, useId, useMemo, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import * as XLSX from "xlsx";
@@ -6,7 +7,7 @@ import {
   Plus, Search, ArrowLeftRight, Wrench, Archive, Pencil, Trash2, ChevronLeft,
   Download, Upload, X, RotateCcw, CircleDot, AlertCircle, AlertTriangle,
   ChevronRight, ChevronDown, Package, ShoppingBasket, ClipboardList, CalendarClock, CalendarCheck, BarChart3, Repeat, Coins, QrCode, ShoppingCart, Receipt, Paperclip, Settings, Building2, Tag, MapPin, Map as MapIcon, Layers,
-  Users, LogOut, Database, Menu, CheckCircle2, Printer, Eye, FileText,
+  Users, Menu, CheckCircle2, Printer, Eye, FileText, Hash,
 } from "lucide-react";
 import UserManagement from "./src/UserManagement.jsx";
 import { useDialogFocus, useEscapeKey } from "./src/lib/modal.js";
@@ -14,7 +15,9 @@ import { dropQuery, readQuery } from "./src/router.js";
 import { appLink, qrDataUri } from "./src/lib/qr.js";
 import { decodeFromCanvas, decodeFromFile, readScan } from "./src/lib/scan.js";
 import { prepareUpload } from "./src/lib/imagePrep.js";
+import { registerTrend, trendDays } from "./src/lib/trend.js";
 import { downloadTransferForm, printTransferForm, transferFormHtml, transferFormItem } from "./src/lib/transferForm.js";
+import { A4, downloadEroForm, eroEquipment, eroFormHtml, printEroForm, durationBetween as spanLabel } from "./src/lib/eroForm.js";
 import {
   completeMaintenance, createAsset, createCategory, createCompany, createMaintenanceSchedule,
   createProject, createRepair, createRepairPart, deleteAsset, deleteCategory, deleteCompany,
@@ -23,10 +26,14 @@ import {
   updateAsset, updateCategory, updateCompany, updateMaintenanceSchedule, updateProject,
   createPerson, deletePerson, setCompanyHeaderBrand, updatePerson,
   getTransferAttachmentUrl, removeTransferAttachment, renameTransferAttachment, saveTransferAttachment,
+  getMaintenanceAttachmentUrl, removeMaintenanceAttachment, renameMaintenanceAttachment, saveMaintenanceAttachment,
   getAssetAttachmentUrl, getAssetAttachmentUrls, removeAssetAttachment, saveAssetAttachment, updateAssetAttachment,
   createBrand, deleteBrand, updateBrand,
   deleteAssetPhoto, uploadAssetPhoto, saveAssetImage, setAssetImagePositions, removeAssetImage,
   updateReceiptMetadata, updateRepair, updateRepairPart, uploadCompanyLogo, upsertProjects,
+  SEQUENCE_DEFAULT, formatSequenceNumber, saveNumberingSequence, sequenceProblem, unsupportedAssetNumbers,
+  MAINTENANCE_RECORD_TYPES, REPAIR_PLACES, maintenanceRecordTypeLabel, emptyMaintenanceRecord, blankMaintenancePartLine,
+  createMaintenanceRecord, updateMaintenanceRecord, deleteMaintenanceRecord,
 } from "./src/data/assetManagementService.js";
 import { discoverLegacyBrowserData, importLegacySnapshot, parseLegacyBackup } from "./src/data/legacyBrowserImport.js";
 import { AssetImportError, ASSET_SHEET_NAME, buildTemplate, planAssetImport, readAssetSheet } from "./src/data/assetExcelImport.js";
@@ -54,6 +61,11 @@ const TINT = {
    then a darker rolled bottom edge. */
 const PLATE = "linear-gradient(180deg,var(--ams-yellow-hi) 0%,var(--ams-yellow) 44%,var(--ams-yellow-deep) 100%)";
 const PLATE_HOVER = "linear-gradient(180deg,var(--ams-yellow-lift) 0%,var(--ams-yellow-hi) 44%,var(--ams-yellow) 100%)";
+/* Same stamped-plate shape, in the workspace's fixed red — used only by the
+   top bar's own controls, which wear the app's red/white brand rather than
+   the yellow accent or a per-company theme colour. */
+const PLATE_RED = "linear-gradient(180deg,#ff4d4a 0%,#e8120f 44%,#c4130f 100%)";
+const PLATE_RED_HOVER = "linear-gradient(180deg,#ff7a77 0%,#ff4d4a 44%,#e8120f 100%)";
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, "Roboto Mono", monospace';
 const SANS = '"Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 const DISPLAY = '"Space Grotesk", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
@@ -196,9 +208,21 @@ const vehicleKeys = (cat) => {
     : [];
 };
 const serialLabel = (cat) => catKind(cat) === "other" ? "Serial number" : "Serial / chassis number";
+/* Which categories carry a body number: heavy equipment, trucks, tools,
+   machinery and equipment, every class of service vehicle, and motorcycles.
+   Matched on the wording like catKind, so "Service Vehicle Class C" added
+   later still qualifies. Anything else - IT, office, laboratory, surveying -
+   has no body number, and the field stays off the form. */
+const hasBodyNumber = (cat) => /heavy|truck|\btools?\b|machinery|service\s*vehicle|motor\s*-?\s*cycle|motorbike/i.test(String(cat || ""));
+const bodyField = (cat, field) => (hasBodyNumber(cat) ? [field] : []);
 const identifierSummary = (cat) => [serialLabel(cat), ...vehicleKeys(cat).map((k) => VEHICLE_FIELD_DEFS[k].label.toLowerCase())].join(", ");
 const vehicleFields = (cat, a = {}) => vehicleKeys(cat).map((k) => ({ key: k, mono: true, value: a[k], ...VEHICLE_FIELD_DEFS[k] }));
-const clearedVehicle = (cat) => Object.fromEntries(VEHICLE_ONLY.filter((k) => !vehicleKeys(cat).includes(k)).map((k) => [k, ""]));
+/* what a category cannot carry is blanked on save, so a value typed before
+   the category was changed does not ride along unseen */
+const clearedVehicle = (cat) => ({
+  ...Object.fromEntries(VEHICLE_ONLY.filter((k) => !vehicleKeys(cat).includes(k)).map((k) => [k, ""])),
+  ...(hasBodyNumber(cat) ? {} : { body: "" }),
+});
 
 const CATEGORY_ACTIONS = {
   addCategory: {
@@ -308,8 +332,6 @@ const companyFields = (c, x) => [
   { key: "logo", label: "Company logo", type: "image", full: true, value: c?.logoUrl || "",
     blank: Building2, clearLabel: "Remove logo",
     hint: "PNG, JPG, WEBP or SVG, up to 2 MB. Shown beside the company name." },
-  { key: "theme", label: "Header colour", type: "color", full: true, value: c?.themeColor || "",
-    hint: "Worn by the workspace top bar while this company brands it. Leave it unset to keep the default black." },
 ];
 const checkCompany = (v, x, self) => {
   const n = normKey(v.name);
@@ -379,14 +401,6 @@ const COMPANY_ACTIONS = {
   },
 };
 
-const partFields = (p, x) => [
-  { key: "ticket", label: "Repair ticket", required: true, type: "select", options: x.openTickets, value: p?.ticket || "" },
-  { key: "name", label: "Part", required: true, placeholder: "Battery, 54Wh", full: true },
-  { key: "amount", label: "Estimated total amount", type: "number" },
-  { key: "supplier", label: "Preferred supplier", list: x.providers },
-  { key: "date", label: "Date requested", type: "date", value: today() },
-];
-
 /* A repair rarely needs one part. Somebody at the counter has a list - seals, a
    bearing, gasket paper - and a new line inherits the supplier, status and date
    of the line above it, because those three are what a batch genuinely shares.
@@ -395,15 +409,20 @@ const partFields = (p, x) => [
    file and shared with the Parts tab, so they are not restated here. */
 const blankPart = (from) => ({
   uid: `part-${crypto.randomUUID()}`,
-  name: "", amount: "",
+  name: "", qty: "1", unit: "",
   supplier: from?.supplier || "", date: from?.date || today(),
 });
+/* What a line is estimated to cost in all: how many, times the estimated cost
+   of one. It is worked out as the lines are typed and is what the ticket
+   stores as the part's estimate. */
+const partEstimate = (row) => num(row.qty) * num(row.unit);
 
 /* One ticket, then as many parts as the job needs. The ticket stays a single
    field because a part belongs to exactly one repair, and asking for it once
    is the whole reason these are being added together. */
 const partListFields = (p, x) => [
-  { key: "ticket", label: "Repair ticket", required: true, type: "select", options: x.openTickets, value: p?.ticket || "" },
+  { key: "ticket", label: "Repair ticket", required: true, type: "select",
+    options: p?.ticketLocked ? [p.ticket] : x.openTickets, value: p?.ticket || "", readOnly: !!p?.ticketLocked },
   { key: "parts", label: "Parts", type: "parts", full: true, value: [blankPart()], suppliers: x.providers },
 ];
 
@@ -415,8 +434,8 @@ const PART_ACTIONS = {
   },
   needPart: {
     title: "Parts needed", submit: "Add part and await purchase",
-    note: "The part is logged for buying on the Parts tab, and this ticket moves to Parts purchase. Add the rest from there or from the ticket.",
-    fields: partFields,
+    note: "The parts are logged for buying on the Parts tab, and this ticket moves to Parts purchase. It takes the same details as Add parts, so list everything the job needs now.",
+    fields: partListFields,
   },
   order: {
     title: "Mark as ordered", submit: "Mark ordered",
@@ -513,6 +532,9 @@ const PHOTO_LIMIT = 10 * 1024 * 1024;
 const DOC_TYPES = ["Sales Invoice (SI)", "Certificate of Registration (CR)", "Deed of Sale (DOD)"];
 const DOC_OTHER = "Other";
 const DOC_ACCEPT = "application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif";
+/* what may be kept with a historic maintenance record: a quotation arrives
+   as a Word document as often as a scan, so those are allowed too */
+const HISTORY_ACCEPT = "application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png,image/webp,image/heic,image/heif";
 const DOC_LIMIT = 10 * 1024 * 1024;
 
 /* One stored string becomes a dropdown choice plus, where it is not one of the
@@ -667,7 +689,7 @@ const ASSET_ACTIONS = {
         hint: !v.brand ? "Choose a brand first." : x.modelsOf(v.brand).length ? null : `No models are listed for ${v.brand}. Add them under Settings.` },
       { key: "serial", label: serialLabel(v.category), mono: true },
       ...vehicleFields(v.category),
-      { key: "body", label: "Body number", mono: true, placeholder: "BN-14" },
+      ...bodyField(v.category, { key: "body", label: "Body number", mono: true, placeholder: "BN-14" }),
       { key: "project", label: "Project/Location", type: "select",
         options: x.projects.map((pr) => pr.pid),
         hint: x.projects.length ? "The address is filled in from the list. Leave it blank if the asset is somewhere that isn't on it." : "No project/locations set up yet — leave this blank, or add them under Settings." },
@@ -711,7 +733,7 @@ const ASSET_ACTIONS = {
         hint: !(v.brand ?? a.brand) ? "Choose a brand first." : null },
       { key: "serial", label: serialLabel(cat), value: a.serial, mono: true },
       ...vehicleFields(cat, a),
-      { key: "body", label: "Body number", value: a.body, mono: true },
+      ...bodyField(cat, { key: "body", label: "Body number", value: a.body, mono: true }),
       { key: "acquired", label: "Date acquired", type: "date", value: a.acquired },
       { key: "cost", label: "Acquisition cost", type: "number", value: a.cost },
       /* Correctable while the asset has never moved; once it has, the transfer
@@ -971,16 +993,27 @@ const MetricTile = ({ label, value, tone = C.ink, hint }) => (
   </div>
 );
 
-function Btn({ children, onClick, icon: Icon, kind = "ghost", small, disabled, iconClass }) {
+/* An icon drawn from an image file in public/icon. A black silhouette is used
+   as a mask over the control's own text colour, so it follows the button the
+   way a line icon did; full-colour art (mask={false}) is shown as it is. */
+function ImgIcon({ src, size = 16, mask = true, className, style }) {
+  return mask
+    ? <span aria-hidden="true" className={className} style={{ display: "inline-block", flex: "0 0 auto", width: size, height: size, background: "currentColor", WebkitMask: `url("${src}") center/contain no-repeat`, mask: `url("${src}") center/contain no-repeat`, ...style }} />
+    : <img aria-hidden="true" alt="" src={src} width={size} height={size} className={className} style={{ display: "block", flex: "0 0 auto", objectFit: "contain", ...style }} />;
+}
+
+function Btn({ children, onClick, icon: Icon, img, kind = "ghost", small, disabled, iconClass }) {
   const s = {
     solid: { background: PLATE, color: C.brandInk, border: `1px solid ${C.brandEdge}`, fontWeight: 800, boxShadow: "0 3px 0 var(--ams-yellow-dim)" },
+    /* the primary action of a form that registers something new */
+    red: { background: C.overdue, color: "#fff", border: `1px solid ${C.overdue}`, fontWeight: 800, boxShadow: "0 3px 0 rgba(0,0,0,.28)" },
     ghost: { background: C.surface, color: C.ink, border: `1px solid ${C.rule}` },
     danger: { background: C.surface, color: C.overdue, border: `1px solid ${C.rule}` },
   }[kind];
   return (
     <button onClick={disabled ? undefined : onClick} disabled={disabled} className="inline-flex items-center gap-2 transition-opacity hover:opacity-75 disabled:opacity-40 disabled:hover:opacity-40"
       style={{ ...s, minHeight: small ? 34 : 40, borderRadius: 10, fontFamily: SANS, fontSize: small ? 12.5 : 13, fontWeight: 700, padding: small ? "0 10px" : "0 13px", cursor: disabled ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
-      {Icon && <Icon size={small ? 13 : 14} strokeWidth={2} className={iconClass} />}{children}
+      {img ? <ImgIcon src={img} size={small ? 13 : 14} className={iconClass} /> : Icon && <Icon size={small ? 13 : 14} strokeWidth={2} className={iconClass} />}{children}
     </button>
   );
 }
@@ -1034,7 +1067,7 @@ function PartLines({ f, value, onChange }) {
   const rows = Array.isArray(value) && value.length ? value : [];
   const box = { ...inputStyle, minHeight: 36, fontSize: 13, borderRadius: 8 };
   const set = (uid, patch) => onChange(rows.map((row) => (row.uid === uid ? { ...row, ...patch } : row)));
-  const total = rows.reduce((sum, row) => sum + num(row.amount), 0);
+  const total = rows.reduce((sum, row) => sum + partEstimate(row), 0);
 
   return (
     <div className="grid gap-2">
@@ -1049,25 +1082,35 @@ function PartLines({ f, value, onChange }) {
                 className="p-1 hover:opacity-60" style={{ color: STAGES.broken.color }}><X size={14} /></button>
             )}
           </div>
-          <input style={box} value={row.name} placeholder="Battery, 54Wh" aria-label={`Part ${index + 1}`}
-            onChange={(e) => set(row.uid, { name: e.target.value })} />
+          <Micro label="Description">
+            <input style={box} value={row.name} placeholder="Battery, 54Wh" aria-label={`Part ${index + 1} description`}
+              onChange={(e) => set(row.uid, { name: e.target.value })} />
+          </Micro>
           {/* A filled-in figure beside a filled-in date says nothing about
               which is which, and a placeholder is gone the moment it is
               needed - so these carry their own small label. */}
+          <div className="grid grid-cols-3 gap-2 mt-2">
+            <Micro label="Qty">
+              <input style={box} type="number" min="0" step="any" value={row.qty} aria-label={`Part ${index + 1} quantity`}
+                onChange={(e) => set(row.uid, { qty: e.target.value })} />
+            </Micro>
+            <Micro label="Estimated unit cost">
+              <input style={box} type="number" min="0" step="any" value={row.unit} aria-label={`Part ${index + 1} estimated unit cost`}
+                onChange={(e) => set(row.uid, { unit: e.target.value })} />
+            </Micro>
+            <Micro label="Total amount">
+              <div style={{ ...box, display: "flex", alignItems: "center", justifyContent: "flex-end", background: C.soft, fontFamily: MONO, cursor: "default" }}
+                aria-label={`Part ${index + 1} total amount`}>{partEstimate(row) ? money(partEstimate(row)) : "—"}</div>
+            </Micro>
+          </div>
           <div className="grid grid-cols-2 gap-2 mt-2">
-            <Micro label="Estimated total amount">
-              <input style={box} type="number" value={row.amount} aria-label={`Part ${index + 1} estimated amount`}
-                onChange={(e) => set(row.uid, { amount: e.target.value })} />
+            <Micro label="Preferred supplier">
+              <input style={box} value={row.supplier} list="dl-part-supplier" aria-label={`Part ${index + 1} preferred supplier`}
+                onChange={(e) => set(row.uid, { supplier: e.target.value })} />
             </Micro>
             <Micro label="Date requested">
               <input style={box} type="date" value={row.date} aria-label={`Part ${index + 1} date requested`}
                 onChange={(e) => set(row.uid, { date: e.target.value })} />
-            </Micro>
-          </div>
-          <div className="mt-2">
-            <Micro label="Preferred supplier">
-              <input style={box} value={row.supplier} list="dl-part-supplier" aria-label={`Part ${index + 1} preferred supplier`}
-                onChange={(e) => set(row.uid, { supplier: e.target.value })} />
             </Micro>
           </div>
         </div>
@@ -1082,7 +1125,7 @@ function PartLines({ f, value, onChange }) {
         </button>
         {total > 0 && (
           <span style={{ fontFamily: MONO, fontSize: 12, color: C.mute }}>
-            {rows.length} {rows.length === 1 ? "part" : "parts"} · {money(total)}
+            {rows.length} {rows.length === 1 ? "part" : "parts"} · total {money(total)}
           </span>
         )}
       </div>
@@ -1159,7 +1202,11 @@ function AssetImageRows({ f, value, onChange }) {
 function AttachmentRows({ f, value, onChange }) {
   const rows = Array.isArray(value) ? value : [];
   const picker = useRef(null);
-  const box = { ...inputStyle, minHeight: 36, fontSize: 13, borderRadius: 8 };
+  /* `plain` rows carry a name and nothing else - a file kept with a
+     maintenance record is not sorted by kind the way the asset's own
+     paperwork is; `readOnly` shows what is filed without offering to change it */
+  const plain = !!f.plain, readOnly = !!f.readOnly;
+  const box = { ...inputStyle, minHeight: 36, fontSize: 13, borderRadius: 8, ...(readOnly ? { background: C.soft, color: C.mute, cursor: "not-allowed" } : {}) };
   const set = (uid, patch) => onChange(rows.map((row) => (row.uid === uid ? { ...row, ...patch } : row)));
   const add = (chosen) => {
     const picked = Array.from(chosen || []);
@@ -1191,24 +1238,32 @@ function AttachmentRows({ f, value, onChange }) {
                   <Eye size={12} />View
                 </button>
               )}
-              <button type="button" onClick={() => onChange(rows.filter((one) => one.uid !== row.uid))}
-                title={`Remove ${row.label || "this document"}`} aria-label={`Remove ${row.label || "this document"}`}
-                className="p-1 hover:opacity-60" style={{ color: STAGES.broken.color }}>
-                <X size={14} />
-              </button>
+              {!readOnly && (
+                <button type="button" onClick={() => onChange(rows.filter((one) => one.uid !== row.uid))}
+                  title={`Remove ${row.label || "this document"}`} aria-label={`Remove ${row.label || "this document"}`}
+                  className="p-1 hover:opacity-60" style={{ color: STAGES.broken.color }}>
+                  <X size={14} />
+                </button>
+              )}
             </div>
-            <div className="grid sm:grid-cols-2 gap-2 mt-2">
-              <input style={box} value={row.label || ""} aria-label="Document name"
-                placeholder="What to call this document"
+            {plain ? (
+              <input style={{ ...box, marginTop: 8 }} value={row.label || ""} aria-label="File name" readOnly={readOnly}
+                placeholder="What to call this file"
                 onChange={(e) => set(row.uid, { label: e.target.value })} />
-              <select style={box} value={row.docType || ""} aria-label="Type of document"
-                onChange={(e) => set(row.uid, { docType: e.target.value })}>
-                <option value="">Type of document —</option>
-                {DOC_TYPES.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
-                <option value={DOC_OTHER}>{DOC_OTHER}…</option>
-              </select>
-            </div>
-            {named && (
+            ) : (
+              <div className="grid sm:grid-cols-2 gap-2 mt-2">
+                <input style={box} value={row.label || ""} aria-label="Document name"
+                  placeholder="What to call this document"
+                  onChange={(e) => set(row.uid, { label: e.target.value })} />
+                <select style={box} value={row.docType || ""} aria-label="Type of document"
+                  onChange={(e) => set(row.uid, { docType: e.target.value })}>
+                  <option value="">Type of document —</option>
+                  {DOC_TYPES.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
+                  <option value={DOC_OTHER}>{DOC_OTHER}…</option>
+                </select>
+              </div>
+            )}
+            {!plain && named && (
               <input style={{ ...box, marginTop: 8 }} value={row.other || ""} aria-label="Name this kind of document"
                 placeholder="Name this kind of document — Official Receipt, Insurance policy…"
                 onChange={(e) => set(row.uid, { other: e.target.value })} />
@@ -1216,15 +1271,17 @@ function AttachmentRows({ f, value, onChange }) {
           </div>
         );
       })}
-      <div>
-        <input ref={picker} type="file" multiple accept={f.accept || DOC_ACCEPT} className="hidden"
-          onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
-        <button type="button" onClick={() => picker.current?.click()}
-          className="inline-flex items-center gap-1.5 hover:opacity-70"
-          style={{ fontSize: 12.5, fontWeight: 700, color: C.ink, border: `1px dashed ${C.rule}`, borderRadius: 8, padding: "7px 11px", background: C.soft }}>
-          <Plus size={13} strokeWidth={2.4} />{rows.length ? "Add another document" : "Add a document"}
-        </button>
-      </div>
+      {!readOnly && (
+        <div>
+          <input ref={picker} type="file" multiple accept={f.accept || DOC_ACCEPT} className="hidden"
+            onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
+          <button type="button" onClick={() => picker.current?.click()}
+            className="inline-flex items-center gap-1.5 hover:opacity-70"
+            style={{ fontSize: 12.5, fontWeight: 700, color: C.ink, border: `1px dashed ${C.rule}`, borderRadius: 8, padding: "7px 11px", background: C.soft }}>
+            <Plus size={13} strokeWidth={2.4} />{plain ? (rows.length ? "Add another file" : "Add a file") : (rows.length ? "Add another document" : "Add a document")}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1514,7 +1571,8 @@ function Field({ f, value, onChange, bad }) {
       {f.type === "textarea" ? (
         <textarea rows={f.rows || 2} style={base} value={value} placeholder={f.placeholder} onChange={(e) => onChange(e.target.value)} />
       ) : f.type === "select" ? (
-        <select style={base} value={value} onChange={(e) => onChange(e.target.value)}>
+        <select style={{ ...base, ...(f.readOnly ? { background: C.soft, color: C.mute, cursor: "not-allowed" } : {}) }}
+          value={value} disabled={f.readOnly} onChange={(e) => onChange(e.target.value)}>
           <option value="">—</option>{f.options.map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
       ) : f.type === "checks" ? (
@@ -1884,6 +1942,39 @@ async function settleFiles(assetId, entries, before = []) {
   return trouble;
 }
 
+/* The files kept with a historic maintenance record, settled the same way
+   once the record row is safely written: rows taken out are removed, rows
+   already filed pick up a corrected name, and newly picked files go up. Each
+   on its own, and whatever failed is named back rather than swallowed. */
+async function settleHistoryFiles(recordId, entries, before = []) {
+  const rows = Array.isArray(entries) ? entries : [];
+  const kept = new Set(rows.filter((row) => row.id).map((row) => row.id));
+  const trouble = [];
+  for (const gone of before.filter((row) => !kept.has(row.id))) {
+    try { await removeMaintenanceAttachment(gone); }
+    catch { trouble.push(gone.name || "a file"); }
+  }
+  for (const row of rows) {
+    const named = String(row.label || "").trim();
+    try {
+      if (row.file) {
+        const { file } = await prepareUpload(row.file);
+        if (file.size > DOC_LIMIT) throw new Error("over the limit");
+        await saveMaintenanceAttachment(recordId, file, { name: named || row.file.name });
+      } else if (row.id) {
+        const was = before.find((one) => one.id === row.id);
+        if (was && named && was.name !== named) await renameMaintenanceAttachment(row.id, named);
+      }
+    } catch { trouble.push(named || row.file?.name || "a file"); }
+  }
+  return trouble;
+}
+/* what the history form shows for the files already kept with a record */
+const historyFileEntries = (record) => (record?.files || []).map((file) => ({
+  uid: file.id, id: file.id, bucket: file.bucket, path: file.path,
+  label: file.name, type: file.type, size: file.size, at: file.at, by: file.by,
+}));
+
 function Dialog({ def, subject, header, ctx, onCancel, onSubmit, busy = false }) {
   /* Initial pass seeds the values; every render after that rebuilds the field list
      from what's been typed, so a field can appear once its trigger is chosen. */
@@ -1993,7 +2084,7 @@ function Dialog({ def, subject, header, ctx, onCancel, onSubmit, busy = false })
             <Btn small icon={def.aside.icon} onClick={() => def.aside.run(vals, subject, ctx)} disabled={busy}>{def.aside.label}</Btn>
           )}
           <span className="flex-1" />
-          <Btn onClick={requestClose} disabled={busy}>Cancel</Btn><Btn kind="solid" onClick={go} disabled={!!dupe || busy}>{busy ? "Saving…" : def.submit}</Btn>
+          <Btn onClick={requestClose} disabled={busy}>Cancel</Btn><Btn kind={def === ASSET_ACTIONS.register ? "red" : "solid"} onClick={go} disabled={!!dupe || busy}>{busy ? "Saving…" : def.submit}</Btn>
         </div>
 
         {askDiscard && <DiscardPrompt onKeep={() => setAskDiscard(false)} onDiscard={onCancel} />}
@@ -2095,25 +2186,49 @@ const CHROME_CSS = `
   background:var(--ams-rail);
   color:${C.ink};transition:transform 220ms ease,width 220ms ease
 }
-.ams-side-head{display:flex;align-items:center;gap:9px;min-height:76px;padding:17px 16px;border-bottom:1px solid var(--ams-line)}
-/* The mark is the AMS emblem itself. It is gold on a dark globe, so the gold
-   plate it used to sit on would have swallowed it - the artwork carries its
-   own shape and glow. */
-.ams-brand-mark{display:grid;width:42px;height:42px;flex-shrink:0;place-items:center}
-.ams-brand-mark img{width:100%;height:100%;object-fit:contain;display:block}
-.ams-brand-name{font-family:${DISPLAY};font-size:14px;font-weight:700;line-height:1.2;letter-spacing:-.01em;color:var(--ams-yellow)}
+.ams-side-head{display:flex;align-items:center;gap:9px;min-height:58px;padding:8px 16px;border-bottom:1px solid var(--ams-line)}
+/* The brand is the full lockup, ams-brand.png: the hexagon badge, then "AMS"
+   and "ASSET MANAGEMENT SYSTEM". The art keeps one height in both rail states
+   and the box in front of it is a window onto it. Expanded, the window shows
+   the whole lockup; collapsed, it narrows to the badge, which is the art's
+   first 240 of 1119 columns. The window's width runs on the rail's own 220ms
+   ease, so the words slide out of view exactly as the rail closes over them. */
+.ams-brand{--brand-h:40px;position:relative;flex:0 0 auto;width:calc(var(--brand-h) * 1119 / 274);height:var(--brand-h);overflow:hidden;transition:width 220ms ease}
+.ams-brand-art{position:absolute;left:0;top:0;width:calc(var(--brand-h) * 1119 / 274);height:100%}
+.ams-brand-art img{display:block;width:100%;height:100%}
+/* Glass glaze, as on the sign-in page: a soft diagonal highlight slides across
+   the lockup, masked by the art's own alpha so it rides the letters and the
+   badge rather than lighting a rectangle round them. */
+.ams-brand-glaze{position:absolute;inset:0;overflow:hidden;pointer-events:none;mix-blend-mode:screen;
+  -webkit-mask:url(/ams-brand.png) 0 0/100% 100% no-repeat;mask:url(/ams-brand.png) 0 0/100% 100% no-repeat}
+.ams-brand-glaze:before{content:"";position:absolute;top:-40%;bottom:-40%;left:0;width:26%;
+  background:linear-gradient(90deg,rgba(255,255,255,0) 0%,rgba(255,255,255,.3) 36%,rgba(255,255,255,.85) 50%,rgba(255,255,255,.3) 64%,rgba(255,255,255,0) 100%);
+  filter:blur(3px);transform:translateX(-130%) skewX(-18deg);animation:ams-glaze 5.5s linear infinite}
+@keyframes ams-glaze{0%{transform:translateX(-130%) skewX(-18deg)}34%,100%{transform:translateX(430%) skewX(-18deg)}}
 .ams-side-close{display:none;margin-left:auto;padding:8px;border:0;border-radius:8px;background:var(--ams-surface-2);color:${C.mute};cursor:pointer}
 .ams-side-status{display:flex;align-items:center;gap:8px;margin:17px 18px 6px;padding:10px 11px;border:1px solid var(--ams-line);border-radius:8px;background:var(--ams-surface);color:${C.mute};font-size:11.5px}
-.ams-side-label{display:flex;align-items:center;gap:9px;padding:19px 22px 8px;color:${C.dim};font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase}
+.ams-side-label{display:flex;align-items:center;gap:9px;padding:19px 22px 8px;color:#fb1f1f;font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase}
 .ams-side-label:after{height:1px;flex:1;background:var(--ams-line);content:""}
-.ams-nav{display:flex;flex-direction:column;gap:3px;padding:0 12px}
-.ams-nav-item{position:relative;display:flex;width:100%;min-height:44px;align-items:center;gap:11px;padding:0 11px;border:0;border-left:3px solid transparent;border-radius:0 8px 8px 0;background:transparent;color:${C.mute};font-family:${SANS};font-size:13.5px;font-weight:600;text-align:left;cursor:pointer;transition:background 170ms ease,color 170ms ease,border-color 170ms ease}
-.ams-nav-item:hover{background:var(--ams-surface-2);color:var(--ams-text)}
-.ams-nav-item[aria-current="page"]{border-left-color:var(--ams-yellow);background:var(--ams-surface-2);color:var(--ams-yellow);font-weight:700}
-.ams-nav-item svg{flex-shrink:0;opacity:.7}
-.ams-nav-item:hover svg,.ams-nav-item[aria-current="page"] svg{opacity:1}
-.ams-nav-count{display:inline-flex;min-width:25px;height:21px;margin-left:auto;align-items:center;justify-content:center;padding:0 7px;border:1px solid var(--ams-line);border-radius:4px;background:var(--ams-surface);color:${C.mute};font-family:${DISPLAY};font-size:10.5px;font-weight:700;font-variant-numeric:tabular-nums}
-.ams-nav-count[data-active="1"]{border-color:var(--ams-yellow);background:var(--ams-yellow);color:var(--ams-on-yellow)}
+/* Section labels in the brand red; each module a white-outlined row with white
+   words and icons; the open module filled red. The fill runs #e8120f to
+   #c4130f rather than the logo's #fb1f1f, because white on #fb1f1f measures
+   3.95:1 and fails for text this size - these two measure 4.6 and 6.1. */
+.ams-nav{display:flex;flex-direction:column;gap:7px;padding:0 12px}
+.ams-nav-item{position:relative;display:flex;width:100%;min-height:44px;align-items:center;gap:11px;padding:0 11px;border:1px solid #fff;border-radius:8px;background:transparent;color:#fff;font-family:${SANS};font-size:13.5px;font-weight:600;text-align:left;cursor:pointer;transition:background 170ms ease,color 170ms ease,border-color 170ms ease,transform 170ms ease,box-shadow 170ms ease}
+.ams-nav-item:hover{border-color:#fff;background:rgba(255,255,255,.07)}
+.ams-nav-item[aria-current="page"]{border-color:#ff4d4a;background:linear-gradient(135deg,#e8120f,#c4130f);color:#fff;font-weight:700;box-shadow:0 6px 16px rgba(232,18,15,.35)}
+.ams-nav-item svg{flex-shrink:0;color:#fff}
+/* On a pointer, the module lifts toward you: it rises 2px and grows 3% in
+   place, with a shadow under it, and settles back when the pointer leaves.
+   Touch screens have no hover, so there a tap just opens the page. The rail
+   pads the list 12px a side, which is room for the 3% growth, so a lifted
+   module never pushes the rail into a sideways scroll. */
+@media (hover:hover){
+  .ams-nav-item:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 8px 18px rgba(0,0,0,.45)}
+  .ams-nav-item[aria-current="page"]:hover{box-shadow:0 10px 22px rgba(232,18,15,.45)}
+}
+.ams-nav-count{display:inline-flex;min-width:25px;height:21px;margin-left:auto;align-items:center;justify-content:center;padding:0 7px;border:1px solid var(--ams-line);border-radius:4px;background:var(--ams-surface);color:#fff;font-family:${DISPLAY};font-size:10.5px;font-weight:700;font-variant-numeric:tabular-nums}
+.ams-nav-count[data-active="1"]{border-color:#fff;background:#fff;color:#c4130f}
 .ams-nav-count[data-quiet="1"]{color:${C.dim}}
 .ams-side-spacer{min-height:22px;flex:1}
 
@@ -2125,9 +2240,10 @@ const CHROME_CSS = `
    purpose, and a drawer with its labels stripped out helps nobody - so a
    narrow window ignores the choice rather than inheriting it. */
 @media (min-width:831px){
-  .ams-shell[data-collapsed="1"] .ams-side-head{flex-direction:column;gap:10px;justify-content:center;padding:15px 8px}
-  .ams-shell[data-collapsed="1"] .ams-rail-toggle{margin-left:0}
-  .ams-shell[data-collapsed="1"] .ams-brand-name{display:none}
+  .ams-shell[data-collapsed="1"] .ams-side-head{justify-content:center;padding:8px}
+  .ams-shell[data-collapsed="1"] .ams-rail-toggle{justify-content:center;padding:0}
+  .ams-shell[data-collapsed="1"] .ams-rail-toggle-label{display:none}
+  .ams-shell[data-collapsed="1"] .ams-brand{width:calc(var(--brand-h) * 240 / 274)}
   .ams-shell[data-collapsed="1"] .ams-side-status{margin:14px 10px 4px;padding:8px;justify-content:center;font-size:0;gap:0}
   .ams-shell[data-collapsed="1"] .ams-side-label{padding:17px 12px 8px;font-size:0;letter-spacing:0}
   .ams-shell[data-collapsed="1"] .ams-nav{padding:0 10px}
@@ -2136,21 +2252,45 @@ const CHROME_CSS = `
   .ams-shell[data-collapsed="1"] .ams-nav-count{display:none}
   .ams-shell[data-collapsed="1"] .ams-profile{margin:16px 10px 14px;padding:10px 6px}
   .ams-shell[data-collapsed="1"] .ams-profile-row{flex-direction:column;gap:9px}
-  .ams-shell[data-collapsed="1"] .ams-profile-name,.ams-shell[data-collapsed="1"] .ams-profile-role{display:none}
+  .ams-shell[data-collapsed="1"] .ams-profile-name,.ams-shell[data-collapsed="1"] .ams-profile-role-text{display:none}
+  .ams-shell[data-collapsed="1"] .ams-profile-role{justify-content:center;margin-top:9px;padding:5px}
 }
 
 /* The rail toggle is the desktop twin of the mobile menu button: same shape,
    but this one narrows the rail rather than opening a drawer over the page. */
-.ams-rail-toggle{display:grid;width:36px;height:36px;flex-shrink:0;margin-left:auto;place-items:center;border:1px solid var(--ams-line);border-radius:8px;background:var(--ams-surface);color:var(--ams-head);cursor:pointer;transition:background 180ms ease,border-color 180ms ease}
-.ams-rail-toggle:hover{border-color:var(--ams-yellow-dim);background:var(--ams-surface-2)}
-.ams-profile{margin:16px 12px 14px;padding:12px;border:1px solid var(--ams-line);border-radius:10px;background:var(--ams-surface)}
+/* The collapse control is the rail's own last row, not a layer floated over
+   the page: it lives inside the rail, so it can never sit on top of a dialog,
+   a menu or the rail's scrollbar, and it moves with the rail because it is
+   part of it. Sticky to the bottom, so a long rail that scrolls still keeps
+   it in reach. The chevron points the way the rail will move: left to close,
+   turned round to point right once it is closed. */
+.ams-rail-toggle{position:sticky;bottom:0;display:flex;flex-shrink:0;align-items:center;gap:10px;width:100%;min-height:46px;padding:0 22px;border:0;border-top:1px solid var(--ams-line);background:var(--ams-rail);color:${C.mute};font:inherit;font-size:12.5px;font-weight:700;letter-spacing:.02em;cursor:pointer;transition:color 180ms ease,background 180ms ease}
+.ams-rail-toggle:hover{background:var(--ams-surface);color:var(--ams-yellow)}
+.ams-rail-toggle svg{flex-shrink:0;transition:transform 220ms ease}
+.ams-shell[data-collapsed="1"] .ams-rail-toggle svg{transform:rotate(180deg)}
+/* The signed-in card, in the rail's red and white: a white outline like the
+   modules above it, a red avatar, and the access level as a strip under the
+   name with its own icon - the key-holder for a super admin, the ID badge for
+   everyone else. The badge and the sign-out glyph are black silhouettes, so
+   they mask white ink rather than being shown as-is; the super admin art is
+   full colour and is shown as it is. */
+.ams-profile{margin:16px 12px 14px;padding:12px;border:1px solid rgba(255,255,255,.85);border-radius:10px;
+  background:linear-gradient(160deg,rgba(255,255,255,.07),rgba(255,255,255,0) 58%),var(--ams-surface)}
 .ams-profile-row{display:flex;align-items:center;gap:10px;min-width:0}
-.ams-avatar{display:grid;width:34px;height:34px;flex-shrink:0;place-items:center;border-radius:8px;background:var(--ams-yellow);color:var(--ams-on-yellow);font-family:${MONO};font-size:11px;font-weight:700}
-.ams-profile-name{color:var(--ams-head);font-size:12.5px;font-weight:700;line-height:1.25;overflow-wrap:anywhere}
-.ams-profile-role{margin-top:7px;color:${C.dim};font-size:10.5px;line-height:1.35;overflow-wrap:anywhere}
-.ams-signout{display:grid;width:34px;height:34px;flex-shrink:0;place-items:center;border:0;border-radius:8px;background:transparent;color:${C.mute};cursor:pointer}
-.ams-signout:hover{background:var(--ams-surface-2);color:var(--ams-alarm)}
-.ams-topbar{position:sticky;top:0;z-index:30;display:flex;min-height:76px;align-items:center;justify-content:space-between;gap:18px;padding:12px 34px;border-bottom:1px solid var(--ams-line);background:rgba(11,13,15,.9);backdrop-filter:blur(14px)}
+.ams-avatar{display:grid;width:36px;height:36px;flex-shrink:0;place-items:center;border-radius:9px;background:linear-gradient(135deg,#e8120f,#c4130f);color:#fff;font-family:${MONO};font-size:11.5px;font-weight:800;box-shadow:0 4px 12px rgba(232,18,15,.35)}
+/* every user gets the same default profile figure; the art is a black
+   silhouette, so it masks white ink on the red tile */
+.ams-avatar-icon{display:block;width:22px;height:22px;background:#fff;-webkit-mask:url("/icon/Default%20Prof.png") center/contain no-repeat;mask:url("/icon/Default%20Prof.png") center/contain no-repeat}
+.ams-profile-name{color:#fff;font-size:13px;font-weight:700;line-height:1.25;overflow-wrap:anywhere}
+.ams-profile-role{display:flex;align-items:center;gap:8px;margin-top:10px;padding:6px 9px;border:1px solid rgba(255,255,255,.16);border-radius:7px;background:rgba(255,255,255,.05);color:#fff;font-size:11px;font-weight:600;line-height:1.35}
+.ams-profile-role-text{min-width:0;overflow-wrap:anywhere}
+.ams-access-icon{display:block;width:22px;height:22px;flex-shrink:0;object-fit:contain}
+.ams-access-icon--normal{background:#fff;-webkit-mask:url("/icon/Normal%20Access.png") center/contain no-repeat;mask:url("/icon/Normal%20Access.png") center/contain no-repeat}
+.ams-signout{display:grid;width:34px;height:34px;flex-shrink:0;place-items:center;border:1px solid rgba(255,255,255,.85);border-radius:8px;background:transparent;color:#fff;cursor:pointer;transition:background 170ms ease,border-color 170ms ease,transform 170ms ease,box-shadow 170ms ease}
+.ams-signout-icon{display:block;width:17px;height:17px;background:currentColor;-webkit-mask:url("/icon/logout.png") center/contain no-repeat;mask:url("/icon/logout.png") center/contain no-repeat}
+.ams-signout:hover{border-color:#ff4d4a;background:linear-gradient(135deg,#e8120f,#c4130f);box-shadow:0 6px 14px rgba(232,18,15,.4)}
+@media (hover:hover){.ams-signout:hover{transform:translateY(-1px)}}
+.ams-topbar{position:sticky;top:0;z-index:30;display:flex;min-height:58px;align-items:center;justify-content:space-between;gap:16px;padding:9px 26px;border-bottom:1px solid var(--ams-line);background:#000}
 .ams-top-start{display:flex;min-width:0;align-items:center;gap:12px}
 .ams-menu{display:none;width:40px;height:40px;flex-shrink:0;place-items:center;border:1px solid var(--ams-line);border-radius:8px;background:var(--ams-surface);color:var(--ams-head);cursor:pointer}
 .ams-breadcrumb{color:${C.dim};font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
@@ -2160,34 +2300,34 @@ const CHROME_CSS = `
    bar - which puts it beside the filter on the register and beside the refresh
    control everywhere else, without either view knowing about it. */
 .ams-top-brand{
-  height:40px;width:auto;max-width:150px;flex-shrink:0;object-fit:contain;
-  padding:5px 8px;border-radius:8px;background:#fff;border:1px solid var(--ams-line);
+  height:34px;width:auto;max-width:140px;flex-shrink:0;object-fit:contain;
+  padding:4px 7px;border-radius:8px;background:#fff;border:1px solid var(--ams-line);
 }
 
 /* The bar is the dark frame, so the filter is dressed as chrome rather than as
    a form field; color-scheme keeps the native option list dark with it. */
 .ams-topbar .ams-top-select{
-  min-width:0;max-width:190px;min-height:40px;padding:0 10px;border:1px solid var(--ams-line);border-radius:8px;
-  background:var(--ams-surface);color:${C.mute};color-scheme:dark;font-family:${SANS};font-size:13px;font-weight:600;
+  min-width:0;max-width:190px;min-height:34px;padding:0 9px;border:1px solid #fff;border-radius:8px;
+  background:var(--ams-surface);color:#fff;color-scheme:dark;font-family:${SANS};font-size:12.5px;font-weight:600;
   line-height:1;cursor:pointer;transition:border-color 180ms ease,color 180ms ease;
 }
-.ams-topbar .ams-top-select:hover{border-color:var(--ams-yellow-dim)}
-.ams-topbar .ams-top-select:focus-visible{outline:2px solid var(--ams-yellow);outline-offset:2px}
-.ams-topbar .ams-top-select[data-set="1"]{border-color:var(--ams-yellow-dim);color:var(--ams-text)}
-.ams-ctl{display:inline-flex;min-height:40px;align-items:center;gap:8px;padding:0 13px;border:1px solid var(--ams-line);border-radius:8px;background:var(--ams-surface);color:${C.ink};font-family:${SANS};font-size:13px;font-weight:600;line-height:1;white-space:nowrap;cursor:pointer;transition:background 180ms ease,border-color 180ms ease,color 180ms ease}
-.ams-ctl:hover:not(:disabled){border-color:var(--ams-yellow-dim);background:var(--ams-surface-2);color:var(--ams-head)}
+.ams-topbar .ams-top-select:hover{border-color:#ff4d4a}
+.ams-topbar .ams-top-select:focus-visible{outline:2px solid #e8120f;outline-offset:2px}
+.ams-topbar .ams-top-select[data-set="1"]{border-color:#ff4d4a;color:#fff}
+.ams-ctl{display:inline-flex;min-height:34px;align-items:center;gap:7px;padding:0 11px;border:1px solid #fff;border-radius:8px;background:var(--ams-surface);color:#fff;font-family:${SANS};font-size:12.5px;font-weight:600;line-height:1;white-space:nowrap;cursor:pointer;transition:background 180ms ease,border-color 180ms ease,color 180ms ease}
+.ams-ctl:hover:not(:disabled){border-color:#ff4d4a;background:var(--ams-surface-2);color:#fff}
 .ams-ctl:disabled{opacity:.4;cursor:not-allowed}
-.ams-ctl[data-open="1"]{border-color:var(--ams-yellow);color:var(--ams-head)}
-.ams-ctl[data-icon="1"]{padding:0 11px}
-.ams-ctl[data-primary="1"]{border-color:var(--ams-yellow-deep);background:${PLATE};color:var(--ams-on-yellow);font-weight:800;box-shadow:0 3px 0 var(--ams-yellow-dim)}
-.ams-ctl[data-primary="1"]:hover:not(:disabled){border-color:var(--ams-yellow);background:${PLATE_HOVER};color:var(--ams-on-yellow)}
-.ams-ctl[data-primary="1"]:active:not(:disabled){transform:translateY(2px);box-shadow:0 1px 0 var(--ams-yellow-dim)}
-.ams-content{width:min(100%,1500px);margin:0 auto;padding:30px 34px 52px;font-family:${SANS};font-size:14px;line-height:1.45}
+.ams-ctl[data-open="1"]{border-color:#e8120f;color:#fff}
+.ams-ctl[data-icon="1"]{padding:0 9px}
+.ams-ctl[data-primary="1"]{border-color:#ff4d4a;background:${PLATE_RED};color:#fff;font-weight:800;box-shadow:0 2px 0 #c4130f}
+.ams-ctl[data-primary="1"]:hover:not(:disabled){border-color:#ff7a77;background:${PLATE_RED_HOVER};color:#fff}
+.ams-ctl[data-primary="1"]:active:not(:disabled){transform:translateY(2px);box-shadow:0 1px 0 #c4130f}
+.ams-content{width:min(100%,1500px);margin:0 auto;padding:18px 26px 44px;font-family:${SANS};font-size:14px;line-height:1.45}
 .ams-label{margin:0 0 6px;color:${C.dim};font-family:${SANS};font-size:11px;font-weight:800;letter-spacing:.09em;line-height:1.2;text-transform:uppercase}
 .ams-section-title{color:var(--ams-head);font-family:${DISPLAY};font-size:16px;font-weight:700;letter-spacing:-.015em;line-height:1.25}
 .ams-shell input,.ams-shell select,.ams-shell textarea{background:var(--ams-well);color:${C.ink};transition:border-color 180ms ease,box-shadow 180ms ease}
 .ams-shell input:focus,.ams-shell select:focus,.ams-shell textarea:focus{border-color:var(--ams-yellow)!important;box-shadow:0 0 0 3px rgba(255,205,17,.25)}
-.ams-pop{position:absolute;top:calc(100% + 7px);z-index:60;padding:5px 0;border:1px solid var(--ams-line);border-radius:9px;background:var(--ams-surface-2);box-shadow:0 18px 55px rgba(0,0,0,.65);animation:ams-pop 140ms ease-out}
+.ams-pop{z-index:60;padding:5px 0;border:1px solid var(--ams-line);border-radius:9px;background:var(--ams-surface-2);box-shadow:0 18px 55px rgba(0,0,0,.65);animation:ams-pop 140ms ease-out}
 @keyframes ams-pop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 .ams-cart-tick{color:var(--ams-ok);animation:ams-tick-pop 340ms cubic-bezier(.22,1.35,.4,1)}
 /* The detail panel keeps station beside the list instead of sitting at the top
@@ -2199,7 +2339,7 @@ const CHROME_CSS = `
 
    Below the md breakpoint there is no second column - selecting an asset
    replaces the list - so there it goes back to scrolling with the page. */
-.ams-detail{position:sticky;top:92px;max-height:calc(100vh - 108px);overflow-y:auto;overscroll-behavior:contain;
+.ams-detail{position:sticky;top:74px;max-height:calc(100vh - 90px);overflow-y:auto;overscroll-behavior:contain;
  scrollbar-width:thin;scrollbar-color:var(--ams-line) transparent}
 .ams-detail::-webkit-scrollbar{width:8px}
 .ams-detail::-webkit-scrollbar-track{background:transparent}
@@ -2217,24 +2357,57 @@ const CHROME_CSS = `
 .ams-shell button:focus-visible{outline:2px solid var(--ams-yellow);outline-offset:2px}
 .ams-spin{animation:ams-rot .9s linear infinite}
 @keyframes ams-rot{to{transform:rotate(360deg)}}
-.ams-stat{position:relative;display:flex;min-height:238px;flex-direction:column;width:100%;overflow:hidden;padding:18px 20px 17px;text-align:left;background:var(--ams-surface);border:1px solid var(--ams-line);border-radius:12px;cursor:pointer;isolation:isolate;transition:border-color 180ms ease,transform 180ms ease}
-.ams-stat:before{position:absolute;inset:0 auto 0 0;width:3px;background:var(--c);content:""}
-.ams-stat:after{position:absolute;top:-54px;right:-54px;width:148px;height:148px;border-radius:50%;background:var(--tint);opacity:.6;content:"";z-index:-1;transition:transform 260ms ease,opacity 260ms ease}
-.ams-stat:hover{border-color:var(--ams-yellow-dim);transform:translateY(-2px)}
-.ams-stat:hover:after{transform:scale(1.14);opacity:.85}
-.ams-stat[aria-pressed="true"]{border-color:var(--c)}
-.ams-stat[aria-pressed="true"]:after{opacity:1}
-.ams-stat-head{display:flex;flex:0 0 auto;align-items:center;gap:11px}
-.ams-stat-icon{display:grid;width:38px;height:38px;flex:0 0 auto;place-items:center;border-radius:9px;background:var(--tint);color:var(--c);transition:transform 180ms ease}
+/* KPI tiles: compact, and cut like the sign-in card - the top-left and
+   bottom-right corners sheared off on the diagonal, the AMS mark's slant.
+   One row carries the icon, the label over the figure, and the tag; the
+   context, the bar and the legend run underneath in thin lines.
+
+   A CSS border cannot follow a clip-path's diagonal, so the tile's own
+   background is the 1px frame and ::before is the face laid 1px inside it,
+   cut to the same shape, with the tile's colour strip down its left edge.
+   Hover warms the frame toward the tile's colour; selected takes it fully. */
+.ams-stat{--cut:15px;--frame:var(--ams-line);position:relative;display:grid;grid-template-columns:auto minmax(0,1fr) auto;
+  grid-template-areas:"icon main tag" "c c c" "trend trend trend" "legend legend legend";align-items:center;column-gap:12px;
+  width:100%;padding:13px 16px 12px 17px;text-align:left;border:0;background:var(--frame);cursor:pointer;isolation:isolate;
+  clip-path:polygon(var(--cut) 0,100% 0,100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,0 100%,0 var(--cut));
+  transition:transform 180ms ease}
+.ams-stat:before{--in:calc(var(--cut) - .5px);position:absolute;inset:1px;z-index:-2;content:"";
+  clip-path:polygon(var(--in) 0,100% 0,100% calc(100% - var(--in)),calc(100% - var(--in)) 100%,0 100%,0 var(--in));
+  background:linear-gradient(90deg,var(--c) 0 3px,transparent 3px),var(--ams-surface)}
+.ams-stat>*{position:relative}
+.ams-stat:hover{--frame:color-mix(in srgb,var(--c) 55%,var(--ams-line));transform:translateY(-2px)}
+.ams-stat[aria-pressed="true"]{--frame:var(--c)}
+.ams-stat-icon{grid-area:icon;display:grid;width:42px;height:42px;place-items:center;border-radius:10px;background:var(--tint);color:var(--c);transition:transform 180ms ease}
+.ams-stat-main{grid-area:main;display:flex;min-width:0;flex-direction:column;gap:5px}
 .ams-stat:hover .ams-stat-icon{transform:scale(1.05)}
-.ams-stat-label{min-width:0;overflow:hidden;color:${C.dim};font-size:11.5px;font-weight:700;letter-spacing:.08em;line-height:1.2;text-overflow:ellipsis;text-transform:uppercase;white-space:nowrap}
-.ams-stat-tag{display:inline-flex;flex:0 0 auto;align-items:center;gap:5px;min-height:24px;margin-left:auto;padding:0 9px;border-radius:4px;background:var(--tint);color:var(--c);font-family:${DISPLAY};font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+/* The tile icons are image files. The silhouettes (Asset DB, Active, the
+   Viewing eye) mask the tile's own colour, so each keeps its tone the way the
+   line icons did; Repair is full-colour art and is shown as it is. */
+.ams-stat-glyph{display:block;width:22px;height:22px;background:currentColor;-webkit-mask:var(--glyph) center/contain no-repeat;mask:var(--glyph) center/contain no-repeat}
+.ams-stat-art{display:block;width:27px;height:27px;object-fit:contain}
+.ams-stat-view{display:block;width:14px;height:14px;background:currentColor;-webkit-mask:url("/icon/Viewing.svg") center/contain no-repeat;mask:url("/icon/Viewing.svg") center/contain no-repeat}
+.ams-stat-label{display:block;min-width:0;overflow:hidden;color:${C.dim};font-size:11.5px;font-weight:700;letter-spacing:.08em;line-height:1.2;text-overflow:ellipsis;text-transform:uppercase;white-space:nowrap}
+.ams-stat-tag{grid-area:tag;align-self:start;display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:0 9px;border-radius:4px;background:var(--tint);color:var(--c);font-family:${DISPLAY};font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
 .ams-stat-tag[data-state="1"]{font-size:10px;letter-spacing:.06em;text-transform:uppercase}
-.ams-stat-v{flex:0 0 auto;margin:16px 0 0;color:var(--ams-head);font-family:${DISPLAY};font-size:40px;font-weight:700;letter-spacing:-.05em;line-height:1;font-variant-numeric:tabular-nums}
-.ams-stat-c{flex:0 0 auto;min-height:32px;margin-top:7px;color:${C.mute};font-size:11.5px;line-height:1.4}
-.ams-bar{display:flex;flex:0 0 auto;height:6px;gap:2px;margin-top:auto;overflow:hidden;border-radius:2px;background:var(--ams-line-soft)}
-.ams-stat-progress{height:100%;border-radius:inherit;background:var(--c);transition:width 280ms ease}
-.ams-legend{display:flex;flex:0 0 auto;flex-wrap:wrap;align-content:flex-end;gap:5px 13px;min-height:36px;margin-top:11px}
+.ams-stat-v{display:block;margin:0;color:var(--ams-head);font-family:${DISPLAY};font-size:28px;font-weight:700;letter-spacing:-.05em;line-height:1;font-variant-numeric:tabular-nums}
+.ams-stat-c{grid-area:c;display:flex;align-items:baseline;gap:10px;min-width:0;margin-top:10px;color:${C.mute};font-size:11px;line-height:1.35}
+.ams-stat-ctx{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ams-stat-delta{flex:0 0 auto;font-weight:700;white-space:nowrap;color:${C.mute}}
+.ams-stat-delta[data-mood="good"]{color:${C.ok}}
+.ams-stat-delta[data-mood="bad"]{color:${STAGES.broken.color}}
+/* the trend strip: 2px line in the tile's colour over a faint fill, today's
+   point as an 8px dot ringed in the surface, a hairline and readout on hover */
+.ams-trend{grid-area:trend;position:relative;height:40px;margin-top:8px;touch-action:pan-y;cursor:crosshair}
+.ams-trend svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.ams-trend-line{fill:none;stroke:var(--c);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
+.ams-trend-area{fill:var(--c);opacity:.1}
+.ams-trend-dot{position:absolute;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:var(--c);box-shadow:0 0 0 2px var(--ams-surface);pointer-events:none}
+.ams-trend-cross{position:absolute;top:-2px;bottom:-2px;width:1px;margin-left:-.5px;background:${C.mute};opacity:.55;pointer-events:none}
+.ams-trend-tip{position:absolute;bottom:calc(100% + 6px);z-index:2;transform:translateX(-50%);padding:4px 8px;border-radius:6px;background:#111418;color:#fff;font-size:11px;font-weight:600;line-height:1.3;white-space:nowrap;pointer-events:none;box-shadow:0 6px 16px rgba(0,0,0,.28)}
+.ams-trend-tip[data-edge="start"]{transform:none}
+.ams-trend-tip[data-edge="end"]{transform:translateX(-100%)}
+.ams-trend-tip b{font-weight:800}
+.ams-legend{grid-area:legend;display:flex;flex-wrap:wrap;gap:4px 13px;min-height:15px;margin-top:8px}
 .ams-legend-item{display:inline-flex;align-items:center;gap:6px;color:${C.mute};font-size:10.5px;font-weight:600;line-height:1.35}
 .ams-legend-dot{width:7px;height:7px;flex:0 0 auto;border-radius:2px;background:var(--d)}
 .ams-legend-n{color:var(--ams-head);font-family:${DISPLAY};font-size:11px;font-weight:700;font-variant-numeric:tabular-nums}
@@ -2264,8 +2437,8 @@ const CHROME_CSS = `
   .ams-backdrop[data-open="1"]{opacity:1;pointer-events:auto}
   .ams-menu{display:grid}
   .ams-rail-toggle{display:none}
-  .ams-topbar{min-height:68px;padding:10px 18px}
-  .ams-content{padding:24px 18px 40px}
+  .ams-topbar{min-height:56px;padding:8px 16px}
+  .ams-content{padding:16px 16px 36px}
 }
 @media (max-width:580px){
   .ams-page-title{font-size:18px}
@@ -2273,33 +2446,66 @@ const CHROME_CSS = `
   .ams-top-actions{gap:7px}
   .ams-topbar .ams-top-select{max-width:132px;font-size:12px}
   .ams-ctl{padding-inline:11px}
-  .ams-stat{min-height:216px;padding:16px}
+  .ams-stat{padding:12px 13px 11px 14px}
   .ams-metric{min-height:108px;padding:14px}
-  .ams-stat-v{margin-top:13px;font-size:30px}
+  .ams-stat-v{font-size:24px}
   .ams-metric-v{font-size:24px}
 }
-@media (prefers-reduced-motion:reduce){.ams-sidebar,.ams-main,.ams-backdrop,.ams-pop,.ams-spin,.ams-cart-tick,.ams-ctl,.ams-nav-item,.ams-stat,.ams-stat:after,.ams-stat-icon,.ams-stat-progress{animation:none;transition:none}}
+@media (prefers-reduced-motion:reduce){.ams-sidebar,.ams-main,.ams-backdrop,.ams-pop,.ams-spin,.ams-cart-tick,.ams-ctl,.ams-nav-item,.ams-stat,.ams-stat-icon,.ams-trend-tip,.ams-brand,.ams-brand-glaze:before,.ams-rail-toggle,.ams-rail-toggle svg,.ams-signout{animation:none;transition:none}}
 `;
 
 
 /* A menu anchored under its own trigger. Closes on outside click and on
    Escape, and on any click inside, so every item is a one-shot action. */
+/* The menu is portaled to the document body rather than left where the
+   trigger sits. Its old home, the top bar, is a backdrop-filter blur - a
+   descendant with its own opaque background can still end up composited
+   into that blur in some browsers, which is what read as a see-through
+   menu. Outside the bar's DOM the menu paints on its own layer instead.
+
+   The bar is a sticky header, so the trigger's screen position never
+   changes under scroll and is only measured again on open and on resize. */
 function Popover({ trigger, children, width = 250, align = "right" }) {
   const [open, setOpen] = useState(false);
-  const box = useRef(null);
+  const [spot, setSpot] = useState(null);
+  const anchor = useRef(null);
+  const menu = useRef(null);
+
+  const place = useCallback(() => {
+    const box = anchor.current?.getBoundingClientRect();
+    if (box) setSpot(box);
+  }, []);
+
   useEffect(() => {
     if (!open) return undefined;
-    const away = (e) => { if (!box.current?.contains(e.target)) setOpen(false); };
+    place();
+    const away = (e) => {
+      if (anchor.current?.contains(e.target) || menu.current?.contains(e.target)) return;
+      setOpen(false);
+    };
     const key = (e) => { if (e.key === "Escape") setOpen(false); };
     document.addEventListener("mousedown", away);
     document.addEventListener("keydown", key);
-    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", key); };
-  }, [open]);
+    window.addEventListener("resize", place);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", key);
+      window.removeEventListener("resize", place);
+    };
+  }, [open, place]);
+
   return (
-    <div ref={box} style={{ position: "relative" }}>
+    <div ref={anchor} style={{ position: "relative" }}>
       {trigger(open, () => setOpen((v) => !v))}
-      {open && (
-        <div className="ams-pop" role="menu" onClick={() => setOpen(false)} style={{ width, [align]: 0 }}>{children}</div>
+      {open && spot && createPortal(
+        <div ref={menu} className="ams-pop" role="menu" onClick={() => setOpen(false)}
+          style={{
+            position: "fixed", top: spot.bottom + 7, width,
+            ...(align === "right" ? { right: window.innerWidth - spot.right } : { left: spot.left }),
+          }}>
+          {children}
+        </div>,
+        document.body,
       )}
     </div>
   );
@@ -2324,13 +2530,54 @@ const MenuItem = ({ icon: Icon, hint, tone, children, onClick, disabled }) => (
    delete button added later cannot quietly miss the gate. */
 const DELETE_PERMISSION = "system.delete";
 
-const OPERATIONAL_TABS = new Set(["assets", "cart", "transfers", "repairs", "parts", "maintenance", "map", "reports"]);
+/* A KPI tile's 12-week trend: one line in the tile's colour over a soft
+   fill, today's point marked. Hover (or a tap) drops a hairline on the
+   nearest week and reads that week's figure; the whole strip is the target,
+   so nobody has to aim at a 2px line. The figure is also on the tile and
+   the change over the 12 weeks is written beside it, so the tooltip adds
+   detail but never gates it. The SVG stretches to the tile and keeps its
+   stroke at 2px; the dot, hairline and tooltip are HTML placed in the same
+   percentages, so none of them stretch with it. */
+const weekLabel = (date, last) => last ? "Today" : new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
-const userInitials = (identity) => {
-  const head = String(identity.name || identity.email || "").split("@")[0];
-  const parts = head.split(/[^A-Za-z0-9]+/).filter(Boolean);
-  return ((parts.length > 1 ? parts[0][0] + parts[1][0] : head.slice(0, 2)) || "?").toUpperCase();
-};
+function TileTrend({ points, noun }) {
+  const [at, setAt] = useState(null);
+  const hold = useRef(0);
+  useEffect(() => () => clearTimeout(hold.current), []);
+  const n = points.length;
+  const values = points.map((p) => p.value);
+  const lo = Math.min(...values), hi = Math.max(...values);
+  const x = (i) => (n > 1 ? (i / (n - 1)) * 100 : 50);
+  const y = (v) => (hi === lo ? 50 : 86 - ((v - lo) / (hi - lo)) * 72);
+  const line = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(2)} ${y(p.value).toFixed(2)}`).join(" ");
+  const pick = (event) => {
+    const box = event.currentTarget.getBoundingClientRect();
+    const f = (event.clientX - box.left) / box.width;
+    setAt(Math.max(0, Math.min(n - 1, Math.round(f * (n - 1)))));
+    /* a finger lifts straight away, so a tapped readout stays a moment */
+    clearTimeout(hold.current);
+    if (event.pointerType === "touch") hold.current = setTimeout(() => setAt(null), 2600);
+  };
+  const shown = at ?? n - 1;
+  return (
+    <div className="ams-trend" aria-hidden="true" onPointerMove={pick} onPointerDown={pick}
+      onPointerLeave={(event) => { if (event.pointerType !== "touch") setAt(null); }}>
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+        <path className="ams-trend-area" d={`${line} L100 100 L0 100 Z`} />
+        <path className="ams-trend-line" d={line} />
+      </svg>
+      {at !== null && <span className="ams-trend-cross" style={{ left: `${x(at)}%` }} />}
+      <span className="ams-trend-dot" style={{ left: `${x(shown)}%`, top: `${y(points[shown].value)}%` }} />
+      {at !== null && (
+        <span className="ams-trend-tip" data-edge={at === 0 ? "start" : at === n - 1 ? "end" : undefined} style={{ left: `${x(at)}%` }}>
+          {weekLabel(points[at].date, at === n - 1)} · <b>{metric(points[at].value)}</b> {noun}
+        </span>
+      )}
+    </div>
+  );
+}
+
+const OPERATIONAL_TABS = new Set(["assets", "cart", "transfers", "repairs", "parts", "maintenance", "map", "reports"]);
 
 function RegisterSidebar({ tabs, tab, onTab, identity, onSignOut, open, onClose, status, railCollapsed, onToggleRail }) {
   const nav = useRef(null);
@@ -2399,16 +2646,12 @@ function RegisterSidebar({ tabs, tab, onTab, identity, onSignOut, open, onClose,
         tabIndex={open ? 0 : -1} aria-label="Close navigation" onClick={onClose} />
       <aside id="ams-sidebar" ref={nav} className="ams-sidebar" data-open={open ? "1" : "0"} aria-label="Asset Management System navigation">
         <div className="ams-side-head">
-          <div className="ams-brand-mark" aria-hidden="true"><img src="/ams-logo.png" alt="" width="42" height="42" /></div>
-          <div className="min-w-0">
-            <div className="ams-brand-name">Asset Management System</div>
+          <div className="ams-brand">
+            <span className="ams-brand-art">
+              <img src="/ams-brand.png" alt="Asset Management System" width="1119" height="274" />
+              <span className="ams-brand-glaze" aria-hidden="true" />
+            </span>
           </div>
-          <button type="button" className="ams-rail-toggle" onClick={onToggleRail}
-            aria-label={railCollapsed ? "Expand navigation" : "Collapse navigation"}
-            title={railCollapsed ? "Expand navigation" : "Collapse navigation"}
-            aria-controls="ams-sidebar" aria-expanded={!railCollapsed}>
-            <Menu size={19} />
-          </button>
           <button type="button" className="ams-side-close" aria-label="Close navigation" onClick={onClose}><X size={18} /></button>
         </div>
 
@@ -2430,54 +2673,37 @@ function RegisterSidebar({ tabs, tab, onTab, identity, onSignOut, open, onClose,
         <div className="ams-side-spacer" />
         <div className="ams-profile">
           <div className="ams-profile-row">
-            <div className="ams-avatar" aria-hidden="true">{userInitials(identity)}</div>
+            <div className="ams-avatar" aria-hidden="true"><span className="ams-avatar-icon" /></div>
             <div className="min-w-0 flex-1">
               <div className="ams-profile-name">{identity.name}</div>
             </div>
-            <button type="button" className="ams-signout" onClick={onSignOut} title="Sign out" aria-label="Sign out"><LogOut size={17} /></button>
+            <button type="button" className="ams-signout" onClick={onSignOut} title="Sign out" aria-label="Sign out">
+              <span className="ams-signout-icon" aria-hidden="true" />
+            </button>
           </div>
-          <div className="ams-profile-role">{identity.role}{identity.isSuperAdmin ? " · Full access" : ""}</div>
+          <div className="ams-profile-role" title={`${identity.role}${identity.isSuperAdmin ? " · Full access" : ""}`}>
+            {identity.isSuperAdmin
+              ? <img className="ams-access-icon" src="/icon/Supper%20Admin%20Access.png" alt="" width="22" height="22" />
+              : <span className="ams-access-icon ams-access-icon--normal" aria-hidden="true" />}
+            <span className="ams-profile-role-text">{identity.role}{identity.isSuperAdmin ? " · Full access" : ""}</span>
+          </div>
         </div>
+        <button type="button" className="ams-rail-toggle" onClick={onToggleRail}
+          aria-label={railCollapsed ? "Expand navigation" : "Collapse navigation"}
+          title={railCollapsed ? "Expand navigation" : "Collapse navigation"}
+          aria-controls="ams-sidebar" aria-expanded={!railCollapsed}>
+          <ChevronLeft size={16} strokeWidth={2.4} />
+          <span className="ams-rail-toggle-label">Collapse</span>
+        </button>
       </aside>
     </>
   );
 }
 
-/* Relative luminance, so a company that picks a pale colour gets dark ink and
-   one that picks a deep colour gets light ink, rather than a fixed guess. */
-const inkOn = (hex) => {
-  const channel = (i) => {
-    const v = parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16) / 255;
-    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * channel(0) + 0.7152 * channel(1) + 0.0722 * channel(2) > 0.36 ? "dark" : "light";
-};
-
-/* The bar paints with a handful of roles; on a branded colour they are derived
-   from it, and its control surfaces become translucent overlays so a button
-   reads against any hue instead of sitting on it as a black patch. */
-const brandedBar = (hex) => {
-  if (!/^#[0-9a-fA-F]{6}$/.test(hex || "")) return undefined;
-  const dark = inkOn(hex) === "dark";
-  const ink = dark ? "11,13,15" : "255,255,255";
-  return {
-    background: hex,
-    "--ams-text": `rgb(${ink})`,
-    "--ams-head": `rgb(${ink})`,
-    "--ams-mute": `rgba(${ink},.72)`,
-    "--ams-dim": `rgba(${ink},.6)`,
-    "--ams-line": `rgba(${ink},.22)`,
-    "--ams-surface": `rgba(${dark ? "255,255,255" : "255,255,255"},${dark ? ".62" : ".14"})`,
-    "--ams-surface-2": `rgba(${dark ? "255,255,255" : "255,255,255"},${dark ? ".82" : ".22"})`,
-    "--ams-well": `rgba(${dark ? "255,255,255" : "255,255,255"},${dark ? ".62" : ".14"})`,
-  };
-};
-
 function RegisterTopbar({ tabs, tab, navOpen, onMenu, onRefresh, refreshing, busy, dataActions, primary, companyNames, company, onCompany, brand }) {
   const active = tabs.find(([key]) => key === tab);
-  const worn = brandedBar(brand?.themeColor);
   return (
-    <header className="ams-topbar" style={worn}>
+    <header className="ams-topbar">
       <div className="ams-top-start">
         <button type="button" className="ams-menu" onClick={onMenu} aria-label="Open navigation"
           aria-controls="ams-sidebar" aria-expanded={navOpen}>
@@ -2505,14 +2731,16 @@ function RegisterTopbar({ tabs, tab, navOpen, onMenu, onRefresh, refreshing, bus
 
         <button type="button" className="ams-ctl" data-icon="1" onClick={onRefresh} disabled={refreshing || busy}
           title="Refresh from Supabase" aria-label="Refresh from Supabase">
-          <RotateCcw size={16} strokeWidth={2} className={refreshing ? "ams-spin" : undefined} />
+          {/* Refresh.png is drawn at about 58% opacity, which all but vanishes on
+              the dark bar, so this is a copy with the same shape at full strength */}
+          <ImgIcon src="/icon/refresh-solid.png" size={15} className={refreshing ? "ams-spin" : undefined} />
         </button>
 
         {dataActions.length > 0 && (
           <Popover width={266} trigger={(isOpen, toggle) => (
             <button type="button" className="ams-ctl" data-open={isOpen ? "1" : "0"} onClick={toggle}
               aria-haspopup="menu" aria-expanded={isOpen} title="Export and import">
-              <Database size={16} strokeWidth={2} style={{ color: C.mute }} />
+              <ImgIcon src="/icon/Data.png" size={16} mask={false} />
               <span className="hidden sm:inline">Data</span>
               <ChevronDown size={14} strokeWidth={2} style={{ color: C.mute }} />
             </button>
@@ -2527,7 +2755,7 @@ function RegisterTopbar({ tabs, tab, navOpen, onMenu, onRefresh, refreshing, bus
         {primary && (
           <button type="button" className="ams-ctl" data-primary="1" onClick={primary.onClick} disabled={primary.disabled}
             title={primary.label} aria-label={primary.label}>
-            <primary.icon size={16} strokeWidth={2} /><span className="hidden sm:inline">{primary.label}</span>
+            {primary.img ? <ImgIcon src={primary.img} size={15} /> : <primary.icon size={15} strokeWidth={2} />}<span className="hidden sm:inline">{primary.label}</span>
           </button>
         )}
       </div>
@@ -2547,6 +2775,9 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
   const [projects, setProjects] = useState([]);
   const [people, setPeople] = useState([]);
   const [brands, setBrands] = useState([]);
+  /* how the register writes the numbers it issues, and the next one of each */
+  const [numbering, setNumbering] = useState(null);
+  const [nextTransfer, setNextTransfer] = useState(null);
   /* The next asset number as the database would issue it. Empty until the
      asset number migration has been applied, and the register then falls back
      to working one out from the assets on screen. */
@@ -2599,6 +2830,14 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
 
   const [dlg, setDlg] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  /* the Add Maintenance modal: null when closed, otherwise the asset tag
+     it is locked to (empty string when opened generically, so the asset
+     field stays a normal dropdown instead of a fixed one) */
+  const [maintenanceChoice, setMaintenanceChoice] = useState(null);
+  /* historic maintenance: every record the user may see, newest first */
+  const [maintenanceRecords, setMaintenanceRecords] = useState([]);
+  /* the printed Equipment Repair Order for one historic record */
+  const [eroView, setEroView] = useState(null);
   const [viewer, setViewer] = useState(null);
   /* the asset's paperwork, opened at the one that was clicked */
   const [gallery, setGallery] = useState(null);
@@ -2665,6 +2904,8 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
       setAssets(data.assets); setRepairs(data.repairs); setPlans(data.plans);
       setCompanies(data.companies); setCategories(data.categories); setProjects(data.projects); setPeople(data.people || []); setBrands(data.brands || []);
       setIssuedTag(data.nextTag || "");
+      setNumbering(data.numbering || null); setNextTransfer(data.nextTransfer ?? null);
+      setMaintenanceRecords(data.maintenanceRecords || []);
       openScannedAsset(data.assets);
       return data;
     } catch (error) {
@@ -2683,6 +2924,8 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
         setAssets(data.assets); setRepairs(data.repairs); setPlans(data.plans);
         setCompanies(data.companies); setCategories(data.categories); setProjects(data.projects); setPeople(data.people || []); setBrands(data.brands || []);
         setIssuedTag(data.nextTag || "");
+        setNumbering(data.numbering || null); setNextTransfer(data.nextTransfer ?? null);
+        setMaintenanceRecords(data.maintenanceRecords || []);
         openScannedAsset(data.assets);
       })
       .catch((error) => {
@@ -2806,14 +3049,18 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
       unique: Object.fromEntries(UNIQUE_FIELDS.map(({ key }) => [
         key, Object.fromEntries(allowedAssets.filter((a) => normKey(a[key])).map((a) => [normKey(a[key]), a.tag])),
       ])),
-      nextTag: issuedTag || `AST-${n.length ? Math.max(...n) + 1 : 1}`,
+      nextTag: issuedTag || `AST-${formatSequenceNumber(Math.max(n.length ? Math.max(...n) + 1 : 1, numbering?.asset?.start || 1), numbering?.asset)}`,
       tagIsIssued: !!issuedTag,
       job: currentJob,
       /* a filed document is opened through the same viewer as a receipt or a
          signed form, which already knows how to show a scan and a PDF */
       openFile: (row) => setViewer({ kind: "document", meta: { ...row, name: row.label } }),
+      /* a file kept with a maintenance record opens the same way; when it was
+         opened from the Add Maintenance modal, `returnTo` is where that modal
+         was, so closing the file brings the modal back to the same place */
+      openHistoryFile: (row, returnTo = null) => setViewer({ kind: "history", meta: { ...row, name: row.label || row.name }, returnTo }),
     };
-  }, [assets, allowedAssets, allowedRepairs, allowedPlans, allowedCompanies, allowedCategories, projects, people, currentJob, issuedTag, brands, access, currentUser]);
+  }, [assets, allowedAssets, allowedRepairs, allowedPlans, allowedCompanies, allowedCategories, projects, people, currentJob, issuedTag, numbering, brands, access, currentUser]);
 
   const transferView = useMemo(
     () => (transferId ? movementsOf(allowedAssets).find(({ entry }) => entry.id === transferId) || null : null),
@@ -2958,7 +3205,12 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
     return m;
   }, [allowedAssets, openJob]);
 
-  const share = (n) => (totals.all ? Math.round((n / totals.all) * 100) : 0);
+  /* twelve weekly snapshots of the same three figures, the last one today */
+  /* keyed on today's date, so a page left open rolls the window over at midnight */
+  const todayKey = today();
+  const trend = useMemo(() => registerTrend(allowedAssets, allowedRepairs, trendDays(12, new Date(`${todayKey}T12:00:00Z`))),
+    [allowedAssets, allowedRepairs, todayKey]);
+
   /* The three buckets are exhaustive, so they compose the whole. Zero-length
      segments are dropped rather than drawn, or the 2px gaps would stack up as
      a stripe where there is no data. */
@@ -3117,6 +3369,60 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
     } catch { /* preserve the dialog input */ }
   };
 
+  /* The Upcoming tab of the Add Maintenance modal, not the generic Dialog: it
+     stays open and shows the error banner on failure instead of closing. */
+  const runAddMaintenanceSchedule = async (vals) => {
+    if (!requirePermission("maintenance.manage", "changing maintenance schedules")) return;
+    try {
+      const tag = String(vals.assetTag).split(" — ")[0];
+      const asset = assets.find((item) => item.tag === tag);
+      if (!asset) throw new Error("The selected asset is no longer available.");
+      await runServerMutation(() => createMaintenanceSchedule(asset.id, vals), "Maintenance schedule created.");
+      setMaintenanceChoice(null);
+    } catch { /* preserve the input; the modal stays open with the error shown */ }
+  };
+
+  /* The Historic tab. Anyone who manages maintenance may write a record up;
+     changing or deleting one is the super admin's alone, and the server holds
+     the same line. Resolves true when saved so the form can step back to the
+     list, false when it did not so nothing typed is lost. */
+  const runSaveMaintenanceRecord = async (recordId, assetId, vals) => {
+    if (!requirePermission("maintenance.manage", "recording maintenance history")) return false;
+    if (recordId && !isSuperAdmin) { setSaveErr("Only a super admin can change a historic maintenance record."); return false; }
+    try {
+      /* the files ride along with the form and are settled once the row is
+         safely written; one that will not go up costs neither the record nor
+         the others, and is named back so it can be added again */
+      const before = recordId ? maintenanceRecords.find((r) => r.id === recordId)?.files || [] : [];
+      const trouble = await runServerMutation(
+        async () => {
+          const saved = recordId ? await updateMaintenanceRecord(recordId, vals) : await createMaintenanceRecord(assetId, vals);
+          return settleHistoryFiles(recordId || saved.id, vals.files, before);
+        },
+        recordId ? "Maintenance record updated." : "Maintenance record saved.",
+      );
+      if (trouble.length) setSaveErr(`The record was saved, but ${trouble.length === 1 ? "one file" : `${trouble.length} files`} could not be filed: ${trouble.join(", ")}. Open the record and add ${trouble.length === 1 ? "it" : "them"} again.`);
+      return true;
+    } catch { return false; }
+  };
+  /* the sheet takes the modal's place rather than stacking on it */
+  const openEroForm = (record) => {
+    const asset = assets.find((a) => a.id === record.assetId);
+    if (!asset) return;
+    setMaintenanceChoice(null);
+    setEroView({ company: companies.find((company) => company.name === asset.company) || { name: asset.company || "" }, asset, record });
+  };
+  const runDeleteMaintenanceRecord = (record) => {
+    if (!isSuperAdmin) return;
+    const asset = assets.find((a) => a.id === record.assetId);
+    setConfirm({
+      title: "Delete this maintenance record?",
+      body: `${asset ? `${asset.tag} · ` : ""}${maintenanceRecordTypeLabel(record.type)} started ${fmt(record.startedOn)}${record.eroCode ? `, ERO code ${record.eroCode}` : ""}. The record and its parts lines are removed for good.`,
+      confirm: "Delete record",
+      run: () => runServerMutation(() => deleteMaintenanceRecord(record.id), "Maintenance record deleted.").catch(() => {}),
+    });
+  };
+
   /* Someone who can see every company has no company of their own, so they
      choose the mark on everyone's behalf; anyone narrower is simply shown the
      register they work in. */
@@ -3242,17 +3548,20 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
         const tk = String(vals.ticket).split(" · ")[0];
         const j = repairs.find((r) => r.ticket === tk);
         if (!j) throw new Error("The selected repair ticket is no longer available.");
-        /* Add parts carries a list; Parts needed is still one at a time. */
-        const rows = name === "addPart"
-          ? (vals.parts || []).filter((row) => String(row.name || "").trim())
-          : [{ name: vals.name, amount: vals.amount, supplier: vals.supplier, date: vals.date }];
+        /* Add parts and Parts needed carry the same list; only the second
+           also moves the ticket on to awaiting parts. */
+        const rows = (vals.parts || []).filter((row) => String(row.name || "").trim());
         if (!rows.length) { setSaveErr("Name at least one part."); return; }
         /* Each line is attempted on its own, so one part the server rejects
            does not cost the four beside it that were fine. */
         const failed = [];
         await runServerMutation(async () => {
           for (const row of rows) {
-            try { await createRepairPart(j.id, { ...row, qty: 1, estimated: row.amount, state: "Needed" }); }
+            try {
+              /* a list line carries a quantity and the cost of one; the ticket
+                 keeps how many and what the lot is estimated at */
+              await createRepairPart(j.id, { ...row, qty: num(row.qty) || 1, estimated: partEstimate(row) || "", state: "Needed" });
+            }
             catch (error) { failed.push({ name: String(row.name).trim(), error }); }
           }
           /* nothing landed at all - let the wrapper say so, keep the form open
@@ -3398,12 +3707,18 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
     : dlg.kind === "company"
     ? (dlg.companyId ? companies.find((c) => c.id === dlg.companyId) : {})
     : dlg.kind === "part"
-    ? (["addPart", "needPart"].includes(dlg.name) ? { ticket: (() => {
+    ? (["addPart", "needPart"].includes(dlg.name) ? (() => {
+        /* Opened from inside one ticket's own detail view, the part is
+           obviously for that ticket, so the field is locked to it rather
+           than left open to picking a different one. Opened from the Parts
+           tab's own "Add part" - no ticket in context - it stays a normal,
+           freely chosen dropdown. */
+        if (!dlg.jobId) return { ticket: "" };
         const j = repairs.find((r) => r.id === dlg.jobId);
-        if (!j) return "";
+        if (!j) return { ticket: "" };
         const a = assets.find((x) => x.id === j.assetId);
-        return `${j.ticket} · ${a?.tag || "?"} · ${j.fault}`;
-      })() } : partOf(dlg))
+        return { ticket: `${j.ticket} · ${a?.tag || "?"} · ${j.fault}`, ticketLocked: true };
+      })() : partOf(dlg))
     : dlg.kind === "plan"
     ? (dlg.planId ? plans.find((p) => p.id === dlg.planId) : { assetTag: current ? `${current.tag} — ${current.name}` : "" })
     : dlg.kind === "asset" ? (dlg.name === "register" ? null : dlg.name === "transferCart" ? { cart: movableCart } : current) : assets.find((a) => a.id === dlg.assetId));
@@ -3482,7 +3797,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
      other tab already carries its own add control - Add part, Add schedule,
      Add company - and repairs start from an asset by design. */
   const primaryAction = can("asset.create") && tab === "assets"
-    ? { icon: Plus, label: "Register asset", disabled: saving, onClick: () => setDlg({ kind: "asset", name: "register" }) }
+    ? { icon: Plus, img: "/icon/Add%20asset.png", label: "Register asset", disabled: saving, onClick: () => setDlg({ kind: "asset", name: "register" }) }
     : null;
 
   return (
@@ -3516,41 +3831,51 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
 
         <div id="ams-panel" role="region" aria-labelledby={`ams-nav-${tab}`} className="ams-content">
         {tab === "assets" && (<>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
             {[
-              ["all", "Total assets", totals.all, Package, C.brandDeep, TINT.brand,
+              ["all", "Total assets", totals.all, { src: "/icon/Asset%20DB.png", mask: true }, C.brandDeep, TINT.brand,
                 "Every asset on the register",
                 mix.map(([mk, n, color, label]) => [mk, label, n, color])],
-              ["active", "Active", totals.active, CheckCircle2, C.ok, TINT.ok,
+              ["active", "Active", totals.active, { src: "/icon/Active.png", mask: true }, C.ok, TINT.ok,
                 "Available for daily operations",
                 [["active", "Available", totals.active, C.ok],
                  ["rest", "Unavailable", totals.out + totals.retired, C.retired]]],
-              ["out", "Broken", totals.out, Wrench, STAGES.broken.color, TINT.alarm,
+              ["out", "Broken", totals.out, { src: "/icon/Repair.png", mask: false }, STAGES.broken.color, TINT.alarm,
                 openStages.length > 0 ? "Out of service and in the repair flow" : "Nothing is out of service",
                 openStages.map((st) => [st, cap(STAGE_SHORT[st]), stageMix[st], STAGES[st].color])],
-            ].map(([k, label, value, Icon, tone, tint, context, legend]) => {
-              const percentage = share(value);
+            ].map(([k, label, value, icon, tone, tint, context, legend]) => {
               const selected = filter === k;
+              /* the change across the trend's 12 weeks. Whether up is good
+                 depends on the tile: more active is good, more broken is bad,
+                 and the register simply growing is neither. The arrow and the
+                 words carry the direction, so it never rests on colour. */
+              const points = trend.map((p) => ({ date: p.date, value: p[k] }));
+              const change = points.length ? points[points.length - 1].value - points[0].value : 0;
+              const upIsGood = { all: 0, active: 1, out: -1 }[k];
+              const mood = change === 0 || upIsGood === 0 ? "flat" : (change > 0) === (upIsGood > 0) ? "good" : "bad";
+              const changeText = change === 0 ? "No change in 12 wks" : `${change > 0 ? "▲" : "▼"} ${metric(Math.abs(change))} in 12 wks`;
+              const noun = { all: "assets", active: "active", out: "out of service" }[k];
               return (
                 <button key={k} type="button" className="ams-stat" aria-pressed={selected}
-                  aria-label={`${label}: ${metric(value)}. ${context}. ${selected ? "Current filter" : "Select to filter assets"}.`}
+                  aria-label={`${label}: ${metric(value)}. ${context}. ${change === 0 ? "No change" : `${change > 0 ? "Up" : "Down"} ${metric(Math.abs(change))}`} over the last 12 weeks. ${selected ? "Current filter" : "Select to filter assets"}.`}
                   style={{ "--c": tone, "--tint": tint }} onClick={() => setFilter(k)}>
-                  <div className="ams-stat-head">
-                    <span className="ams-stat-icon" aria-hidden="true"><Icon size={19} strokeWidth={2} /></span>
+                  <span className="ams-stat-icon" aria-hidden="true">
+                    {icon.mask
+                      ? <span className="ams-stat-glyph" style={{ "--glyph": `url("${icon.src}")` }} />
+                      : <img className="ams-stat-art" src={icon.src} alt="" />}
+                  </span>
+                  <span className="ams-stat-main">
                     <span className="ams-stat-label">{label}</span>
-                    {selected
-                      ? <span className="ams-stat-tag" data-state="1"><CheckCircle2 size={12} aria-hidden="true" />Viewing</span>
-                      : k !== "all" && <span className="ams-stat-tag">{percentage}%</span>}
+                    <span className="ams-stat-v">{metric(value)}</span>
+                  </span>
+                  {selected && <span className="ams-stat-tag" data-state="1"><span className="ams-stat-view" aria-hidden="true" />Viewing</span>}
+                  <div className="ams-stat-c">
+                    <span className="ams-stat-ctx">{context}</span>
+                    <span className="ams-stat-delta" data-mood={mood} aria-hidden="true">{changeText}</span>
                   </div>
-                  <div className="ams-stat-v">{metric(value)}</div>
-                  <div className="ams-stat-c">{context}</div>
-                  <div className="ams-bar" aria-hidden="true">
-                    {k === "all" && totals.all > 0
-                      ? mix.map(([mk, n, color]) => <span key={mk} style={{ flex: n, background: color }} />)
-                      : <span className="ams-stat-progress" style={{ width: `${percentage}%` }} />}
-                  </div>
+                  <TileTrend points={points} noun={noun} />
                   {/* always rendered, empty or not, so one card without a
-                      legend cannot drop its bar out of line with the others */}
+                      legend cannot drop its trend out of line with the others */}
                   <div className="ams-legend" aria-hidden="true">
                     {legend.map(([lk, lLabel, n, color]) => (
                       <span key={lk} className="ams-legend-item">
@@ -3563,7 +3888,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
               );
             })}
           </div>
-          <div className="flex flex-wrap items-center gap-2 mb-4">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
             <div className="relative flex-1" style={{ minWidth: 240 }}>
               <Search size={15} style={{ color: C.mute, position: "absolute", left: 11, top: 13 }} />
               <input value={q} onChange={(e) => handleAssetQuery(e.target.value)} placeholder="Scan a QR code, or search tag, name, serial, body no., location, person"
@@ -3625,7 +3950,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
                           <span aria-hidden="true" title={`No asset image — ${a.tag}`}
                             style={{ width: "100%", height: "100%", display: "grid", placeItems: "center",
                               borderRadius: 7, border: `1px solid ${C.ruleSoft}`, background: C.soft }}>
-                            <Package size={17} style={{ color: C.dim }} />
+                            <ImgIcon src="/icon/No%20Image.png" size={19} style={{ color: C.dim }} />
                           </span>
                         )}
                         {a.images?.length > 1 && (
@@ -3667,15 +3992,15 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
                         <button type="button" onClick={() => askAddToCart(a)} aria-pressed={inCart(a.id)}
                           title={inCart(a.id) ? `Remove ${a.tag} from the transfer cart` : `Add ${a.tag} to the transfer cart`}
                           aria-label={inCart(a.id) ? `Remove ${a.tag} from the transfer cart` : `Add ${a.tag} to the transfer cart`}
-                          className="px-3 flex items-center hover:opacity-70"
-                          style={{ color: C.dim, background: inCart(a.id) ? TINT.ok : "transparent", borderLeft: `1px solid ${C.ruleSoft}` }}>
+                          className="flex items-center justify-center hover:opacity-70"
+                          style={{ width: 40, color: C.dim, background: inCart(a.id) ? TINT.ok : "transparent", borderLeft: `1px solid ${C.ruleSoft}` }}>
                           {/* once it is in the cart the control stops being an
                               invitation and becomes a receipt: the trolley is
                               replaced by a green tick, which lands with the tap
                               that put the asset there and then sits still */}
                           {inCart(a.id)
                             ? <CheckCircle2 size={16} strokeWidth={2.4} className="ams-cart-tick" />
-                            : <ShoppingCart size={16} strokeWidth={1.9} />}
+                            : <ImgIcon src="/icon/add-to-cart.png" size={17} />}
                         </button>
                       ) : (
                         /* the column stays, so the rows above and below it do
@@ -3772,7 +4097,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
                   <div className="px-5 py-4" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
                     <div className="flex items-center justify-between mb-2">
                       <Label>Maintenance schedules</Label>
-                      {can("maintenance.manage") && <Btn small icon={Plus} onClick={() => setDlg({ kind: "plan", name: "addPlan" })}>Add schedule</Btn>}
+                      {can("maintenance.manage") && <Btn small icon={Plus} onClick={() => setMaintenanceChoice({ lockedAssetTag: current ? `${current.tag} — ${current.name}` : "" })}>Add Maintenance</Btn>}
                     </div>
                     {plansOf(current.id).length === 0 ? (
                       <div className="px-3 py-5 text-center" style={{ border: `1px dashed ${C.rule}`, fontSize: 13, color: C.mute }}>
@@ -3801,8 +4126,8 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
                     {current.status === "active" && <>
                       {can("asset.transfer") && <Btn icon={ArrowLeftRight} onClick={() => setDlg({ kind: "asset", name: "transfer" })}>Transfer</Btn>}
                       {can("asset.transfer") && cartable(current) && (
-                        <Btn icon={inCart(current.id) ? CheckCircle2 : ShoppingCart} iconClass={inCart(current.id) ? "ams-cart-tick" : undefined}
-                          onClick={() => askAddToCart(current)}>
+                        <Btn icon={inCart(current.id) ? CheckCircle2 : undefined} img={inCart(current.id) ? undefined : "/icon/add-to-cart.png"}
+                          iconClass={inCart(current.id) ? "ams-cart-tick" : undefined} onClick={() => askAddToCart(current)}>
                           {inCart(current.id) ? "Remove from cart" : "Add to cart"}
                         </Btn>
                       )}
@@ -3856,7 +4181,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
 
         {tab === "maintenance" && (
           <MaintenanceTab plans={allowedPlans} assets={allowedAssets}
-            onAdd={() => setDlg({ kind: "plan", name: "addPlan" })}
+            onAdd={() => setMaintenanceChoice({ lockedAssetTag: "" })}
             onLog={(id) => setDlg({ kind: "plan", name: "logPlan", planId: id })}
             onEdit={(id) => setDlg({ kind: "plan", name: "editPlan", planId: id })}
             onDelete={(p) => setConfirm({ title: `Delete "${p.name}"?`, body: "The schedule and its completed-maintenance records go with it. Costs already recorded will drop out of reports.", confirm: "Delete schedule", run: () => runServerMutation(() => deleteMaintenanceSchedule(p.id), "Maintenance schedule deleted.").catch(() => {}) })}
@@ -3873,8 +4198,36 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
         {tab === "settings" && isSuperAdmin && (
           <SettingsTab companies={companies} categories={categories} projects={ctx.projects} people={people} brands={brands} assets={assets}
             canSetBrand={seesEveryCompany}
+            numbering={numbering} nextTag={issuedTag} nextTransfer={nextTransfer}
             on={(action, id, item, n) => {
               if (action === "setBrand") return runHeaderBrand(id);
+              if (action === "saveNumbering") {
+                const isAsset = id === "asset";
+                const show = (value) => `${isAsset ? "AST-" : "TR "}${formatSequenceNumber(value, { width: String(item.start).length })}`;
+                return setConfirm({
+                  title: `Change the ${isAsset ? "asset" : "transfer"} numbering sequence?`,
+                  body: isAsset
+                    ? `Asset numbers will be written like ${show(item.start)} and stop at ${show(item.end)}. Numbering carries on from where it is now, never lower than ${show(item.start)}. Every number the register issued itself (AST- followed by digits) is rewritten in the new style; numbers in any other shape, typed or imported, stay as they are.`
+                    : `Transfer numbers will be written like ${show(item.start)} and stop at ${show(item.end)}. Numbering carries on from where it is now, never lower than ${show(item.start)}. Transfers already recorded keep their number and are shown in the new style.`,
+                  confirm: "Save sequence",
+                  /* Not through runServerMutation: a refusal here is written for
+                     the admin - the tags in the way, the pair that would collide -
+                     so it comes back in this same dialog rather than as the
+                     generic banner. */
+                  run: async () => {
+                    setSaving(true); setSaveErr("");
+                    try {
+                      await saveNumberingSequence(id, item);
+                      await reloadOperationalData();
+                      setNotice("Numbering sequence saved.");
+                    } catch (error) {
+                      setConfirm({ title: "Numbering sequence not saved", body: error.message || "Supabase rejected the change. Nothing was renumbered.", blocked: true });
+                    } finally {
+                      setSaving(false);
+                    }
+                  },
+                });
+              }
               if (action === "clearBrand") return runHeaderBrand(null);
               if (action === "addCompany") return setDlg({ kind: "company", name: "addCompany" });
               if (action === "editCompany") return setDlg({ kind: "company", name: "editCompany", companyId: id });
@@ -4003,6 +4356,12 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
         </div>
       )}
 
+      {eroView && (
+        <div className="ams-overlay">
+          <EroFormViewer data={eroView} onClose={() => setEroView(null)} />
+        </div>
+      )}
+
       {scanMiss && (
         <div className="ams-overlay fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(11,13,15,0.55)" }}>
           <div role="alertdialog" aria-modal="true" aria-labelledby="ams-sticker-title"
@@ -4033,19 +4392,42 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
         <MediaGallery items={gallery.items} at={gallery.at} resolve={gallery.resolve} onClose={() => setGallery(null)} />
       </div>}
 
-      {viewer && <div className="ams-overlay"><ReceiptViewer meta={viewer.meta || viewer} onClose={() => setViewer(null)}
-        open={viewer.kind === "transfer" ? getTransferAttachmentUrl : viewer.kind === "document" ? getAssetAttachmentUrl : getReceiptUrl}
+      {viewer && <div className="ams-overlay"><ReceiptViewer meta={viewer.meta || viewer}
+        onClose={() => { const back = viewer.returnTo; setViewer(null); if (back) setMaintenanceChoice(back); }}
+        open={viewer.kind === "transfer" ? getTransferAttachmentUrl : viewer.kind === "document" ? getAssetAttachmentUrl : viewer.kind === "history" ? getMaintenanceAttachmentUrl : getReceiptUrl}
         removeLabel={viewer.kind === "transfer" ? "Detach form" : "Remove receipt"}
-        /* a document opened from the edit form is taken off in that form, where
-           the removal is held with the rest of the changes until Save */
-        canRemove={viewer.kind !== "document" && can(DELETE_PERMISSION)}
+        /* a document opened from the edit form, or a file opened from the
+           history form, is taken off in that form, where the removal is held
+           with the rest of the changes until Save */
+        canRemove={viewer.kind !== "document" && viewer.kind !== "history" && can(DELETE_PERMISSION)}
         onRemove={() => {
-          if (viewer.kind === "document") return setViewer(null);
+          if (viewer.kind === "document" || viewer.kind === "history") return setViewer(null);
           if (viewer.kind !== "transfer") return removeReceipt(viewer.jobId, viewer.partId, viewer.meta || viewer);
           const file = viewer.meta;
           setViewer(null);
           detachTransferForm(file);
         }} /></div>}
+
+      {maintenanceChoice && (
+        <div className="ams-overlay">
+          <MaintenanceChoiceModal
+            lockedAssetTag={maintenanceChoice.lockedAssetTag}
+            initialAssetTag={maintenanceChoice.initialAssetTag}
+            initialTab={maintenanceChoice.initialTab}
+            ctx={ctx}
+            assets={assets}
+            records={maintenanceRecords}
+            isSuperAdmin={isSuperAdmin}
+            busy={saving}
+            onClose={() => setMaintenanceChoice(null)}
+            onSubmit={runAddMaintenanceSchedule}
+            onSaveRecord={runSaveMaintenanceRecord}
+            onDeleteRecord={runDeleteMaintenanceRecord}
+            onOpenEroForm={openEroForm}
+            onOpenFile={ctx.openHistoryFile}
+          />
+        </div>
+      )}
 
       {confirm && (
         <div className="ams-overlay fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(11,13,15,0.55)" }}>
@@ -4169,6 +4551,10 @@ function ReceiptViewer({ meta, onClose, onRemove, canRemove, removeLabel = "Remo
           {err ? <div className="text-center py-10" style={{ fontSize: 13, color: C.overdue }}>{err}</div>
             : !src ? <div className="text-center py-10" style={{ fontFamily: MONO, fontSize: 11, letterSpacing: "0.15em", color: C.mute }}>LOADING…</div>
             : meta.type?.startsWith("image/") ? <img src={src} alt={meta.name} style={{ maxWidth: "100%", display: "block", margin: "0 auto" }} />
+            : meta.type && meta.type !== "application/pdf"
+              /* a Word document has no in-page rendering; the browser would
+                 either download it silently or show a blank frame */
+              ? <div className="text-center py-10" style={{ fontSize: 13, color: C.mute, lineHeight: 1.6 }}>This kind of file cannot be shown here.<br />Download it to open it on your computer.</div>
             : <iframe title={meta.name} src={src} style={{ width: "100%", height: "60vh", border: "none", background: "var(--ams-surface-2)" }} />}
         </div>
         <div className="flex justify-between gap-2 px-4 py-3" style={{ borderTop: `1px solid ${C.ruleSoft}` }}>
@@ -4470,7 +4856,7 @@ function Registry({ icon: Icon, title, blurb, addLabel, items, countOf, metaOf, 
   );
 }
 
-function SettingsTab({ companies, categories, projects, people, brands, assets, on, canSetBrand }) {
+function SettingsTab({ companies, categories, projects, people, brands, assets, on, canSetBrand, numbering, nextTag, nextTransfer }) {
   return (<>
     <Registry
       icon={Building2} title="Companies" addLabel="Add company"
@@ -4580,7 +4966,94 @@ function SettingsTab({ companies, categories, projects, people, brands, assets, 
         })}
       </div>
     </div>
+
+    <NumberingSequences numbering={numbering} nextTag={nextTag} nextTransfer={nextTransfer} assets={assets}
+      onSave={(kind, value) => on("saveNumbering", kind, value)} />
   </>);
+}
+
+/* Where the register's own numbering starts and where it stops, for assets
+   and for transfers. The zeros on the start are the padding: 000001 issues
+   000001, 000002 and on; 1 issues 1, 2, 3. The rules live server-side in
+   set_numbering_sequence; the checks here only keep an impossible value from
+   making the trip. */
+function NumberingSequences({ numbering, nextTag, nextTransfer, assets, onSave }) {
+  const asset = numbering?.asset || SEQUENCE_DEFAULT;
+  const transfer = numbering?.transfer || SEQUENCE_DEFAULT;
+  /* Tags the change could not rewrite. The server refuses the save while any
+     exist; saying so here saves the admin the trip. */
+  const unsupported = unsupportedAssetNumbers(assets);
+  const blocker = unsupported.count === 0 ? "" :
+    `${unsupported.count} existing asset ${unsupported.count === 1 ? "tag does" : "tags do"} not use the supported AST numbering format. Examples: ${unsupported.examples.join(", ")}. Correct these asset tags first; the sequence cannot be changed until then.`;
+  /* the number the database would issue next, read off the preview it gave */
+  const nextAssetValue = Number.parseInt(String(nextTag || "").replace(/^AST-0*/i, ""), 10) || 1;
+  const sequenceKey = (sequence) => `${sequence.start}-${sequence.end}-${sequence.width}`;
+  return (
+    <div className="mb-8">
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+        <div style={{ maxWidth: 560 }}>
+          <div className="ams-section-title">Numbering sequences</div>
+          <div style={{ fontSize: 13, color: C.mute, lineHeight: 1.5, marginTop: 2 }}>
+            Where the register's own numbering starts and where it stops. Type the start with the zeros you want to see: a start of <strong style={{ fontFamily: MONO }}>000001</strong> issues 000001, 000002 and on; a start of <strong style={{ fontFamily: MONO }}>1</strong> issues 1, 2, 3.
+          </div>
+        </div>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <SequenceCard key={`asset-${sequenceKey(asset)}`} title="Asset numbering sequence" prefix="AST-" sequence={asset} nextValue={nextAssetValue} blocker={blocker}
+          blurb="The number stamped on each asset when it is registered. Numbers the register issued itself are rewritten in the new style when this is saved; imported or hand-typed numbers are left alone."
+          onSave={(value) => onSave("asset", value)} />
+        <SequenceCard key={`transfer-${sequenceKey(transfer)}`} title="Transfer numbering sequence" prefix="TR " sequence={transfer} nextValue={nextTransfer || 1}
+          blurb="The TR number on each transfer form. Transfers already recorded keep their number and are shown in the new style."
+          onSave={(value) => onSave("transfer", value)} />
+      </div>
+    </div>
+  );
+}
+
+function SequenceCard({ title, blurb, prefix, sequence, nextValue, blocker = "", onSave }) {
+  const asTyped = (value) => formatSequenceNumber(value, sequence);
+  const digits = (value) => String(value ?? "").replace(/\D/g, "").slice(0, 15);
+  const [start, setStart] = useState(asTyped(sequence.start));
+  const [end, setEnd] = useState(asTyped(sequence.end));
+  const problem = sequenceProblem(start, end);
+  const dirty = start !== asTyped(sequence.start) || end !== asTyped(sequence.end);
+  /* what the next number would read under what is typed: the counter never
+     moves back, so it is the later of where it stands and the new start */
+  const preview = `${prefix}${formatSequenceNumber(Math.max(nextValue || 1, Number.parseInt(start || "1", 10) || 1), { width: start.length || 1 })}`;
+  const box = { ...inputStyle, fontFamily: MONO, letterSpacing: "0.06em" };
+  return (
+    <div className="ams-table-frame" style={{ background: C.surface, padding: "16px 18px" }}>
+      <div className="flex items-center gap-2">
+        <Hash size={16} style={{ color: C.mute, flexShrink: 0 }} />
+        <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
+      </div>
+      <div style={{ fontSize: 12.5, color: C.mute, marginTop: 4, lineHeight: 1.5 }}>{blurb}</div>
+      {blocker && (
+        <div role="alert" className="flex items-start gap-2 px-3 py-2.5 mt-3" style={{ background: TINT.warn, borderLeft: `3px solid ${C.due}`, fontSize: 12.5, color: C.due, lineHeight: 1.5 }}>
+          <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 2 }} />
+          <span>{blocker}</span>
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-3 mt-4">
+        <div>
+          <Label>Start numbering sequence</Label>
+          <input style={box} inputMode="numeric" placeholder="000001" value={start} onChange={(e) => setStart(digits(e.target.value))} aria-label={`${title} start`} />
+        </div>
+        <div>
+          <Label>Ending sequence</Label>
+          <input style={box} inputMode="numeric" placeholder="999999" value={end} onChange={(e) => setEnd(digits(e.target.value))} aria-label={`${title} end`} />
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 mt-4">
+        <div style={{ fontSize: 12.5, color: problem ? C.due : C.mute, lineHeight: 1.5 }}>
+          {problem
+            ? problem
+            : <>Next number will read <span style={{ fontFamily: MONO, fontWeight: 700, color: C.ink }}>{preview}</span></>}
+        </div>
+        <Btn kind="solid" icon={CheckCircle2} disabled={!dirty || !!problem || !!blocker} onClick={() => onSave({ start, end })}>Save sequence</Btn>
+      </div>
+    </div>
+  );
 }
 
 /* ------------------------------ parts ------------------------------ */
@@ -4627,6 +5100,83 @@ const formDataOf = (entry, asset, companies) => ({
     id: entry.id,
   },
 });
+
+/* The Equipment Repair Order for one historic record, on screen with print
+   and download - the same viewer the transfer form has. */
+function EroFormViewer({ data, onClose }) {
+  const panel = useRef(null);
+  const stage = useRef(null);
+  const titleId = useId();
+  useEscapeKey(true, onClose);
+  useDialogFocus(panel);
+  const [html] = useState(() => eroFormHtml(data));
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const { asset, record } = data;
+
+  /* The preview is the page itself: an A4 frame at its true 210 x 297mm,
+     scaled down as one piece to whatever room the dialog has. Scaling the
+     frame rather than reflowing it keeps every rule and column where it will
+     be on paper. */
+  const [scale, setScale] = useState(1);
+  useEffect(() => {
+    const fit = () => {
+      const room = stage.current?.clientWidth;
+      if (room) setScale(Math.min(1, room / A4.px.width));
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    if (stage.current) observer.observe(stage.current);
+    return () => observer.disconnect();
+  }, []);
+
+  const save = async () => {
+    setSaving(true); setErr("");
+    try { await downloadEroForm(data); }
+    catch (error) { setErr(error?.message || "The PDF could not be made. Print to PDF instead."); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(25,28,39,0.6)" }}>
+      <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
+        className="flex flex-col" style={{ maxWidth: 900, width: "100%", maxHeight: "94vh", background: C.surface, borderRadius: 2, outline: "none" }}>
+        <div className="flex items-center justify-between gap-3 px-4 py-3" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
+          <div className="min-w-0">
+            <div id={titleId} style={{ fontSize: 14, fontWeight: 600 }}>
+              Equipment Repair Order
+              {record.eroCode ? <span style={{ fontFamily: DISPLAY, color: C.overdue, marginLeft: 8 }}>{record.eroCode}</span> : null}
+            </div>
+            <div style={{ fontFamily: MONO, fontSize: 11, color: C.mute }}>
+              {asset.tag} · {fmt(record.startedOn)} · A4 210 × 297 mm
+            </div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ color: C.mute }} className="p-1 hover:opacity-60"><X size={18} /></button>
+        </div>
+        <div ref={stage} className="flex-1 overflow-auto p-4" style={{ background: C.paper }}>
+          {/* the box the scaled page leaves behind, so the scroll area is the
+              height of the sheet on screen and not of the frame before it */}
+          <div style={{ width: A4.px.width * scale, height: A4.px.height * scale, margin: "0 auto" }}>
+            <iframe title={`Equipment Repair Order for ${asset.tag}`} srcDoc={html} scrolling="no"
+              style={{ display: "block", width: A4.px.width, height: A4.px.height, border: "none",
+                background: "#fff", boxShadow: "0 2px 14px rgba(0,0,0,.28)",
+                transform: `scale(${scale})`, transformOrigin: "top left" }} />
+          </div>
+        </div>
+        {err && (
+          <div className="mx-4 mb-3 flex items-start gap-2 px-3 py-2" style={{ background: STAGES.broken.tint, color: STAGES.broken.color, fontSize: 13, lineHeight: 1.45 }}>
+            <AlertCircle size={14} style={{ marginTop: 2, flexShrink: 0 }} />
+            <span>{err}</span>
+          </div>
+        )}
+        <div className="flex justify-end gap-2 px-4 py-3" style={{ borderTop: `1px solid ${C.ruleSoft}` }}>
+          <Btn icon={Download} onClick={save} disabled={saving}>{saving ? "Making PDF…" : "Download PDF"}</Btn>
+          <Btn kind="solid" icon={Printer} onClick={() => printEroForm(data)} disabled={saving}>Print</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /* how many signed sheets are filed against a movement */
 const filedCount = (entry) => (entry?.files || []).length;
@@ -5172,7 +5722,7 @@ function TransferCartTab({ assets, movable, statusOf, onOpen, onRemove, onClear,
                     <img src={asset.photoUrl} alt="" style={{ width: 38, height: 38, flexShrink: 0, objectFit: "cover", borderRadius: 2, border: `1px solid ${C.ruleSoft}`, background: C.soft }} />
                   ) : (
                     <span aria-hidden="true" style={{ width: 38, height: 38, flexShrink: 0, display: "grid", placeItems: "center", borderRadius: 2, border: `1px solid ${C.ruleSoft}`, background: C.soft }}>
-                      <Package size={15} style={{ color: C.dim }} />
+                      <ImgIcon src="/icon/No%20Image.png" size={17} style={{ color: C.dim }} />
                     </span>
                   )}
                   <div className="min-w-0 flex-1">
@@ -5763,6 +6313,481 @@ function RepairDetail({ job, asset, history = [], onBack, onAct, onPartAct, onVi
 
 /* --------------------------- maintenance --------------------------- */
 
+/* Add Maintenance opens on one modal, not a chooser that hands off to a
+   second one. The asset is fixed by whichever "Add Maintenance" button was
+   clicked (greyed out, unpickable) when that context exists, and floats free
+   only from the tab-wide button where nothing was clicked yet. Upcoming is
+   the recurring-schedule form; Historic is the record of work already done.
+   Switching tabs swaps the panel below in place and keeps what was typed in
+   the other - the modal itself never closes and reopens. A click beside it
+   does nothing; Cancel, the X and Escape ask first when anything was typed. */
+/* One size for the dialog, whichever tab is showing and whatever state
+   the historic one is in - the list, a record under review, a blank form.
+   The panel is fixed, its middle scrolls and its buttons stay put, so
+   switching tabs never resizes anything under the reader. */
+const MAINTENANCE_MODAL_W = 780;
+const MAINTENANCE_MODAL_H = "min(860px, 92vh)";
+/* a tab's panel: the scrolling middle and the footer that stays with it */
+const tabPanel = (on) => ({ display: on ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 });
+const tabBody = { flex: 1, minHeight: 0, overflowY: "auto" };
+const tabFoot = { flexShrink: 0 };
+
+/* The files kept with a historic record, from the paperclip on its row.
+   Resting the pointer on the clip opens the list and moving away closes it;
+   a tap does the same where there is nothing to hover with. Choosing a file
+   opens it. The list is portaled to the body and fixed to the clip's spot,
+   so the modal's scrolling list cannot clip it, and it stacks above the
+   modal the way the top-bar menus do. */
+function HistoryFilesPop({ files, onOpen }) {
+  const [open, setOpen] = useState(false);
+  const [spot, setSpot] = useState(null);
+  const anchor = useRef(null);
+  const menu = useRef(null);
+  const leaving = useRef(null);
+  const width = 320;
+
+  const show = () => {
+    clearTimeout(leaving.current);
+    const box = anchor.current?.getBoundingClientRect();
+    if (box) setSpot(box);
+    setOpen(true);
+  };
+  /* the pointer crosses a small gap between the clip and the list; a short
+     grace keeps the list from vanishing on the way */
+  const hide = () => { clearTimeout(leaving.current); leaving.current = setTimeout(() => setOpen(false), 140); };
+  useEffect(() => () => clearTimeout(leaving.current), []);
+  useEffect(() => {
+    if (!open) return undefined;
+    const away = (e) => { if (!anchor.current?.contains(e.target) && !menu.current?.contains(e.target)) setOpen(false); };
+    const key = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", key); };
+  }, [open]);
+
+  const count = files.length;
+  const label = `${count} ${count === 1 ? "file" : "files"} kept with this record`;
+  return (<>
+    <button ref={anchor} type="button" onMouseEnter={show} onMouseLeave={hide} onFocus={show} onBlur={hide}
+      onClick={() => (open ? setOpen(false) : show())}
+      className="inline-flex items-center gap-1 align-middle hover:opacity-70"
+      style={{ marginLeft: 8, fontFamily: MONO, fontSize: 11, padding: "1px 7px", borderRadius: 20,
+        border: `1px solid ${open ? C.ink : C.rule}`, color: C.ink, background: C.surface, cursor: "pointer" }}
+      aria-haspopup="menu" aria-expanded={open} aria-label={label} title={label}>
+      <Paperclip size={11} />{count}
+    </button>
+    {open && spot && createPortal(
+      <div ref={menu} className="ams-pop" role="menu" onMouseEnter={show} onMouseLeave={hide}
+        style={{ position: "fixed", top: spot.bottom + 6, left: Math.max(8, Math.min(spot.left, window.innerWidth - width - 8)), width }}>
+        <div className="px-3 pt-1.5 pb-1" style={{ fontFamily: SANS, fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: C.mute }}>{label}</div>
+        {files.map((file) => (
+          <button key={file.id} type="button" role="menuitem" className="ams-item" onClick={() => { setOpen(false); onOpen(file); }}
+            title={`Open ${file.name}`}>
+            <Paperclip size={14} strokeWidth={2} style={{ color: C.mute, flexShrink: 0, marginTop: 1 }} />
+            <span className="min-w-0">
+              <span className="block truncate">{file.name}</span>
+              <span className="block truncate" style={{ fontFamily: MONO, fontSize: 10.5, color: C.mute }}>{kb(file.size)} · filed {fmt(file.at)}{file.by ? ` by ${file.by}` : ""}</span>
+            </span>
+            <Eye size={13} style={{ color: C.mute, flexShrink: 0, marginLeft: "auto", marginTop: 2 }} />
+          </button>
+        ))}
+      </div>,
+      document.body,
+    )}
+  </>);
+}
+
+function MaintenanceChoiceModal({ lockedAssetTag = "", initialAssetTag = "", initialTab = "upcoming", ctx, assets = [], records = [], isSuperAdmin = false, busy = false, onClose, onSubmit, onSaveRecord, onDeleteRecord, onOpenEroForm, onOpenFile }) {
+  const [tab, setTab] = useState(initialTab || "upcoming");
+  const def = PLAN_ACTIONS.addPlan;
+  /* the asset it opens on: locked from the asset panel, or the one it was
+     showing before it stepped aside for a file */
+  const fields = useMemo(() => def.fields({ assetTag: lockedAssetTag || initialAssetTag || "" }, ctx), [def, ctx, lockedAssetTag, initialAssetTag]);
+  const [opened] = useState(() => Object.fromEntries(fields.map((f) => [f.key, f.value ?? ""])));
+  const [vals, setVals] = useState(opened);
+  const [err, setErr] = useState("");
+  const [historicDirty, setHistoricDirty] = useState(false);
+  const [askDiscard, setAskDiscard] = useState(false);
+  const [historicView, setHistoricView] = useState("list");
+  const [editing, setEditing] = useState(null);
+  const panel = useRef(null);
+  const titleId = useId();
+
+  const assetField = lockedAssetTag
+    ? { ...fields.find((f) => f.key === "assetTag"), options: [lockedAssetTag], readOnly: true, full: true }
+    : { ...fields.find((f) => f.key === "assetTag"), full: true };
+  const restFields = fields.filter((f) => f.key !== "assetTag");
+  const assetTag = lockedAssetTag || vals.assetTag || "";
+  const asset = useMemo(() => {
+    const tag = String(assetTag).split(" — ")[0];
+    return tag ? assets.find((a) => a.tag === tag) || null : null;
+  }, [assets, assetTag]);
+  const assetRecords = useMemo(() => (asset ? records.filter((r) => r.assetId === asset.id) : []), [records, asset]);
+
+  /* A different asset chosen drops back to the list; a record deleted while
+     open is simply no longer there to edit, so the list shows instead. Both
+     are derived from what is loaded rather than chased with an effect. */
+  const assetId = asset?.id || null;
+  const [viewAssetId, setViewAssetId] = useState(assetId);
+  if (viewAssetId !== assetId) { setViewAssetId(assetId); setEditing(null); setHistoricView("list"); }
+  const liveEditing = editing ? records.find((r) => r.id === editing.id) || null : null;
+
+  const changeField = (key, value) => { setVals((v) => ({ ...v, [key]: value })); setErr(""); };
+  const go = () => {
+    const withAsset = { ...vals, assetTag };
+    const miss = fields.filter((f) => f.required && !String(withAsset[f.key] || "").trim());
+    if (miss.length) return setErr(`Fill in ${miss.map((m) => m.label.toLowerCase()).join(", ")}.`);
+    onSubmit(withAsset);
+  };
+
+  /* choosing which asset to look at is not work that can be lost, so it does
+     not count; anything typed for a schedule does */
+  const upcomingDirty = Object.keys(vals).some((key) => key !== "assetTag" && String(vals[key] ?? "") !== String(opened[key] ?? ""));
+  const dirty = upcomingDirty || historicDirty;
+  /* Closing, and leaving for the printed sheet, take the same route: nothing
+     typed goes straight away, anything typed asks first. askDiscard holds
+     what to do once the discard is confirmed. */
+  const leave = (then) => {
+    if (busy) return;
+    if (dirty) return setAskDiscard({ then });
+    then();
+  };
+  const requestClose = () => leave(onClose);
+  const openSheet = (record) => leave(() => onOpenEroForm(record));
+  /* a file kept with a record opens on its own, with this modal out of the
+     way; where the modal was goes with it, so closing the file brings the
+     modal back on the same asset and the same tab */
+  const openFile = (file) => leave(() => { onClose(); onOpenFile?.(file, { lockedAssetTag, initialAssetTag: assetTag, initialTab: tab }); });
+  useEscapeKey(!busy && !askDiscard, requestClose);
+  useEscapeKey(!!askDiscard, () => setAskDiscard(false));
+  useDialogFocus(panel);
+
+  const showForm = (historicView === "form" && (!editing || liveEditing)) || (asset && assetRecords.length === 0);
+  const tabButton = (key, label) => (
+    <button key={key} type="button" onClick={() => setTab(key)} className="px-3 py-2 text-sm"
+      style={{ borderRadius: 10, border: `1px solid ${tab === key ? C.brandEdge : C.rule}`, background: tab === key ? C.brand : C.surface, color: tab === key ? C.brandInk : C.ink, fontWeight: 600 }}>
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6" style={{ background: "rgba(25,28,39,0.45)" }}>
+      <div className="relative w-full" style={{ maxWidth: MAINTENANCE_MODAL_W }}>
+      <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
+        className="w-full flex flex-col" style={{ height: MAINTENANCE_MODAL_H, background: C.surface, borderRadius: 2, border: `1px solid ${C.rule}`, outline: "none" }}>
+
+        <div className="flex items-start justify-between px-5 py-4" style={{ borderBottom: `1px solid ${C.ruleSoft}`, flexShrink: 0 }}>
+          <div id={titleId} style={{ fontSize: 17, fontWeight: 600 }}>Add Maintenance</div>
+          <button type="button" onClick={requestClose} disabled={busy} aria-label="Close" style={{ color: C.mute }} className="p-1 hover:opacity-60 disabled:opacity-40"><X size={18} /></button>
+        </div>
+
+        <div className="px-5 pt-4" style={{ flexShrink: 0 }}>
+          <div className="grid grid-cols-2 gap-x-4">
+            <Field f={assetField} value={assetTag} onChange={(v) => changeField("assetTag", v)} />
+          </div>
+        </div>
+
+        <div className="flex gap-2 px-5 pt-4" style={{ flexShrink: 0 }}>
+          {tabButton("upcoming", "Upcoming")}
+          {tabButton("historic", "Historic")}
+        </div>
+
+        <div style={tabPanel(tab === "upcoming")}>
+          <div style={tabBody}>
+            <div className="px-5 pt-4" style={{ fontSize: 13, color: C.mute, lineHeight: 1.5 }}>{def.note}</div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3 p-5">
+              {restFields.map((f) => <Field key={f.key} f={f} value={vals[f.key] ?? ""} onChange={(v) => changeField(f.key, v)} />)}
+            </div>
+            {err && (
+              <div className="mx-5 mb-3 flex items-start gap-2 px-3 py-2" style={{ background: STAGES.broken.tint, color: STAGES.broken.color, fontSize: 13, lineHeight: 1.45 }}>
+                <AlertCircle size={14} style={{ marginTop: 2, flexShrink: 0 }} />
+                <span>{err}</span>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center justify-end gap-2 px-5 py-4" style={{ borderTop: `1px solid ${C.ruleSoft}`, background: C.soft, ...tabFoot }}>
+            <Btn onClick={requestClose} disabled={busy}>Cancel</Btn>
+            <Btn kind="solid" onClick={go} disabled={busy}>{busy ? "Saving…" : def.submit}</Btn>
+          </div>
+        </div>
+
+        <div style={tabPanel(tab === "historic")}>
+          {!asset ? (<>
+            <div className="p-5" style={tabBody}>
+              <div className="px-4 py-6 text-center" style={{ border: `1px dashed ${C.rule}`, fontSize: 13, color: C.mute, lineHeight: 1.5 }}>
+                Choose an asset above to see its maintenance history or write up a job that was done.
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-4" style={{ borderTop: `1px solid ${C.ruleSoft}`, background: C.soft, ...tabFoot }}>
+              <Btn onClick={requestClose} disabled={busy}>Close</Btn>
+            </div>
+          </>) : !showForm ? (<>
+            <div style={tabBody}>
+            <div className="px-5 pt-4" style={{ fontSize: 13, color: C.mute, lineHeight: 1.5 }}>
+              This asset already has {assetRecords.length} historic {assetRecords.length === 1 ? "record" : "records"}. Review one below, or add another.
+            </div>
+            <div className="px-5 pt-3 pb-4">
+              <div style={{ border: `1px solid ${C.ruleSoft}` }}>
+                {assetRecords.map((record) => (
+                  <div key={record.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2.5" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
+                    <div style={{ fontFamily: MONO, fontSize: 12.5, minWidth: 96 }}>{fmt(record.startedOn)}</div>
+                    <div className="flex-1 min-w-0" style={{ minWidth: 150 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 600 }}>{maintenanceRecordTypeLabel(record.type)}{record.eroCode ? <span style={{ fontFamily: MONO, fontWeight: 400, color: C.mute, marginLeft: 8 }}>{record.eroCode}</span> : null}</div>
+                      <div style={{ fontSize: 12.5, color: C.mute }}>
+                        {[record.assignedTo && `Assigned to ${record.assignedTo}`, record.failureCause].filter(Boolean).join(" · ") || "No details recorded"}
+                        {/* that files are kept with it: resting on the clip lists
+                            them, and choosing one opens it */}
+                        {record.files?.length ? <HistoryFilesPop files={record.files} onOpen={openFile} /> : null}
+                      </div>
+                    </div>
+                    {/* the state and the two ways into the record travel
+                        together, so a longer line of detail never splits them
+                        across two rows */}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <Chip color={record.completedOn ? C.ok : C.due} tint={record.completedOn ? TINT.ok : TINT.warn}>
+                        {record.completedOn ? `Completed ${fmt(record.completedOn)}` : record.finishedOn ? `Finished ${fmt(record.finishedOn)}` : "In progress"}
+                      </Chip>
+                      <Btn small icon={FileText} onClick={() => openSheet(record)}>ERO form</Btn>
+                      <Btn small icon={Eye} onClick={() => { setEditing(record); setHistoricView("form"); }}>{isSuperAdmin ? "Review / edit" : "Review"}</Btn>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-4" style={{ borderTop: `1px solid ${C.ruleSoft}`, background: C.soft, ...tabFoot }}>
+              <Btn onClick={requestClose} disabled={busy}>Close</Btn>
+              <Btn kind="solid" icon={Plus} onClick={() => { setEditing(null); setHistoricView("form"); }} disabled={busy}>Add historic record</Btn>
+            </div>
+          </>) : (
+            <HistoricMaintenanceForm key={liveEditing?.id || `new-${asset.id}`} record={liveEditing} asset={asset}
+              readOnly={!!liveEditing && !isSuperAdmin} canDelete={!!liveEditing && isSuperAdmin} busy={busy}
+              onOpenForm={liveEditing ? () => openSheet(liveEditing) : undefined}
+              onOpenFile={onOpenFile}
+              showBack={assetRecords.length > 0}
+              onBack={() => { setEditing(null); setHistoricView("list"); }}
+              onCancel={requestClose}
+              onDirtyChange={setHistoricDirty}
+              onDelete={() => onDeleteRecord(liveEditing)}
+              onSave={async (value) => {
+                const saved = await onSaveRecord(liveEditing?.id || null, asset.id, value);
+                if (saved) { setHistoricDirty(false); setEditing(null); setHistoricView("list"); }
+              }} />
+          )}
+        </div>
+
+        {askDiscard && <DiscardPrompt onKeep={() => setAskDiscard(false)} onDiscard={() => { const { then } = askDiscard; setAskDiscard(false); then(); }} />}
+      </div>
+      </div>
+    </div>
+  );
+}
+
+/* One historic job, laid out the way the Equipment Repair Order is: the
+   header, the details table (who repaired it, hours for repair and for
+   P.M., the parts and supplies lines), contracted repairs and totals, then
+   completion and sign-off. Amount on a parts line and the parts total are
+   worked out from quantity and unit cost as they are typed, and stay open to
+   correction. Date Completed follows the finish date until it is set by
+   hand. Read-only for anyone but the super admin once it has been saved. */
+function HistoricMaintenanceForm({ record, asset = {}, readOnly = false, canDelete = false, busy = false, showBack = false, onBack, onCancel, onSave, onDelete, onDirtyChange, onOpenForm, onOpenFile }) {
+  const seed = useMemo(() => ({
+    ...emptyMaintenanceRecord(), ...(record || {}),
+    parts: record?.parts?.length ? record.parts : [blankMaintenancePartLine()],
+    files: historyFileEntries(record),
+  }), [record]);
+  const [vals, setVals] = useState(seed);
+  const [err, setErr] = useState("");
+  const snapshot = (v) => JSON.stringify({ ...v, id: undefined, assetId: undefined, createdAt: undefined, updatedAt: undefined });
+  const dirty = !readOnly && snapshot(vals) !== snapshot(seed);
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+
+  const set = (key, value) => { setVals((v) => ({ ...v, [key]: value })); setErr(""); };
+  const lock = readOnly ? { background: C.soft, color: C.mute, cursor: "not-allowed" } : {};
+  const box = { ...inputStyle, ...lock };
+  const cell = { ...box, minHeight: 34, padding: "6px 8px", fontSize: 13, borderRadius: 8 };
+  const text = (key, extra = {}) => <input style={extra.mono ? { ...box, fontFamily: MONO } : box} value={vals[key] ?? ""} readOnly={readOnly} placeholder={extra.placeholder} onChange={(e) => set(key, e.target.value)} />;
+  const date = (key, onChange) => <input type="date" style={box} value={vals[key] ?? ""} readOnly={readOnly} onChange={(e) => (onChange || ((v) => set(key, v)))(e.target.value)} />;
+  const area = (key, rows = 2) => <textarea rows={rows} style={box} value={vals[key] ?? ""} readOnly={readOnly} onChange={(e) => set(key, e.target.value)} />;
+  const field = (label, control, { full, required, hint } = {}) => (
+    <div className={full ? "col-span-2" : "col-span-2 sm:col-span-1"}>
+      <Label>{label}{required && <span style={{ color: STAGES.broken.color }}> *</span>}</Label>
+      {control}
+      {hint && <div className="mt-1" style={{ fontSize: 11.5, color: C.mute }}>{hint}</div>}
+    </div>
+  );
+  const section = (title) => <div className="col-span-2 ams-section-title" style={{ marginTop: 6 }}>{title}</div>;
+  /* off the asset, never typed: what the paper calls the equipment */
+  const equipment = eroEquipment(asset);
+  const fixed = (value) => <div style={{ ...inputStyle, background: C.soft, color: value ? C.ink : C.mute, display: "flex", alignItems: "center", cursor: "default" }}>{value || "—"}</div>;
+  const span = (to) => { const label = spanLabel(vals.startedOn, to); return label ? `(${label})` : ""; };
+
+  const totalOf = (lines) => lines.reduce((sum, line) => sum + num(line.amount), 0);
+  const withTotal = (v, lines) => ({ ...v, parts: lines, partsTotal: lines.some((line) => String(line.amount).trim()) ? totalOf(lines).toFixed(2) : v.partsTotal });
+  const setLine = (index, key, value) => {
+    setVals((v) => withTotal(v, v.parts.map((line, i) => {
+      if (i !== index) return line;
+      const next = { ...line, [key]: value };
+      if (key === "qty" || key === "unitCost") {
+        const qty = parseFloat(next.qty), unit = parseFloat(next.unitCost);
+        if (!isNaN(qty) && !isNaN(unit)) next.amount = (qty * unit).toFixed(2);
+      }
+      return next;
+    })));
+    setErr("");
+  };
+  const addLine = () => setVals((v) => ({ ...v, parts: [...v.parts, blankMaintenancePartLine()] }));
+  const removeLine = (index) => setVals((v) => { const kept = v.parts.filter((_, i) => i !== index); return withTotal(v, kept.length ? kept : [blankMaintenancePartLine()]); });
+  const setFinished = (value) => setVals((v) => ({ ...v, finishedOn: value, completedOn: !v.completedOn || v.completedOn === v.finishedOn ? value : v.completedOn }));
+
+  const go = () => {
+    if (!String(vals.startedOn || "").trim()) return setErr("Fill in the start date.");
+    onSave(vals);
+  };
+
+  const th = { padding: "7px 8px", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.mute, textAlign: "left", background: C.soft, borderBottom: `1px solid ${C.rule}`, whiteSpace: "nowrap" };
+  const sub = { ...th, fontWeight: 600, textTransform: "none", letterSpacing: 0, fontSize: 11.5 };
+  const td = { padding: "5px 6px", verticalAlign: "top", borderBottom: `1px solid ${C.ruleSoft}` };
+  const lineInput = (index, key, extra = {}) => (
+    <input style={{ ...cell, ...(extra.mono ? { fontFamily: MONO } : {}), ...(extra.right ? { textAlign: "right" } : {}) }} value={vals.parts[index][key] ?? ""} readOnly={readOnly}
+      placeholder={extra.placeholder} onChange={(e) => setLine(index, key, e.target.value)} aria-label={`${extra.label || key} line ${index + 1}`} />
+  );
+
+  return (<>
+    <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+    {!record && !showBack && (
+      <div className="px-5 pt-4" style={{ fontSize: 13, color: C.mute, lineHeight: 1.5 }}>No historic records for this asset yet. Write up the first one below.</div>
+    )}
+    {readOnly && (
+      <div className="mx-5 mt-4 flex items-start gap-2 px-3 py-2" style={{ background: TINT.info, color: C.active, fontSize: 12.5, lineHeight: 1.45 }}>
+        <AlertCircle size={14} style={{ marginTop: 2, flexShrink: 0 }} />
+        <span>Saved records can only be changed or deleted by a super admin. You are viewing this one.</span>
+      </div>
+    )}
+    <div className="grid grid-cols-2 gap-x-4 gap-y-3 p-5">
+      {field("What maintenance", (
+        <select style={box} value={vals.type} disabled={readOnly} onChange={(e) => set("type", e.target.value)}>
+          {MAINTENANCE_RECORD_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+        </select>
+      ), { required: true })}
+      {field("ERO Code", text("eroCode", { mono: true, placeholder: "2600588" }))}
+      {field("Code", (<>
+        <input style={box} list="ams-ero-code-options" value={vals.repairPlace ?? ""} readOnly={readOnly} placeholder="Field, Yard or Contracted outside"
+          onChange={(e) => set("repairPlace", e.target.value)} />
+        {!readOnly && <datalist id="ams-ero-code-options">{REPAIR_PLACES.map((place) => <option key={place} value={place} />)}</datalist>}
+      </>), { hint: "Where the repair took place, as written on the form" })}
+      {field("Date (start)", date("startedOn"), { required: true })}
+      {field("Assigned to", text("assignedTo"))}
+      {section("Equipment")}
+      {field("Equipment type", fixed(equipment.type), { hint: "The asset's name" })}
+      {field("SN / PN", fixed(equipment.snPn), { hint: asset.plate ? "Plate number" : "Serial number" })}
+      {field("I.D / BD", fixed(equipment.idBd), { hint: "Body number" })}
+      {field("Mileage / Hours", text("mileageHours", { mono: true }))}
+      {field("Location", text("location", { placeholder: asset.location || "" }))}
+      {field("Describe failure or cause", area("failureCause", 3), { full: true })}
+
+      {section("Details")}
+      <div className="col-span-2" style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", minWidth: 680, borderCollapse: "separate", borderSpacing: 0, border: `1px solid ${C.rule}`, borderRadius: 10, overflow: "hidden" }}>
+          <thead>
+            <tr>
+              <th style={th}>Repaired by</th>
+              <th style={th}>Repair</th>
+              <th style={th}>P.M.</th>
+              <th style={{ ...th, textAlign: "center", borderLeft: `1px solid ${C.rule}` }} colSpan={readOnly ? 5 : 6}>Parts &amp; supplies</th>
+            </tr>
+            <tr>
+              <th style={sub}>Name</th>
+              <th style={sub}>Hours</th>
+              <th style={sub}>Hours</th>
+              <th style={{ ...th, borderLeft: `1px solid ${C.rule}` }}>Qty.</th>
+              <th style={th}>Parts#</th>
+              <th style={th}>Description</th>
+              <th style={th}>Unit cost</th>
+              <th style={th}>Amount</th>
+              {!readOnly && <th style={th} aria-label="Remove line" />}
+            </tr>
+          </thead>
+          <tbody>
+            {vals.parts.map((line, index) => (
+              <tr key={index}>
+                {index === 0 && (<>
+                  <td style={{ ...td, width: 150 }} rowSpan={vals.parts.length}><input style={cell} value={vals.repairedBy} readOnly={readOnly} onChange={(e) => set("repairedBy", e.target.value)} aria-label="Repaired by name" /></td>
+                  <td style={{ ...td, width: 76 }} rowSpan={vals.parts.length}><input style={{ ...cell, fontFamily: MONO }} value={vals.repairHours} readOnly={readOnly} onChange={(e) => set("repairHours", e.target.value)} aria-label="Repair hours" /></td>
+                  <td style={{ ...td, width: 76 }} rowSpan={vals.parts.length}><input style={{ ...cell, fontFamily: MONO }} value={vals.pmHours} readOnly={readOnly} onChange={(e) => set("pmHours", e.target.value)} aria-label="P.M. hours" /></td>
+                </>)}
+                <td style={{ ...td, width: 58, borderLeft: `1px solid ${C.rule}` }}>{lineInput(index, "qty", { mono: true, right: true, label: "Qty" })}</td>
+                <td style={{ ...td, width: 96 }}>{lineInput(index, "partNo", { mono: true, label: "Parts#" })}</td>
+                <td style={td}>{lineInput(index, "description", { label: "Description" })}</td>
+                <td style={{ ...td, width: 92 }}>{lineInput(index, "unitCost", { mono: true, right: true, label: "Unit cost" })}</td>
+                <td style={{ ...td, width: 96 }}>{lineInput(index, "amount", { mono: true, right: true, label: "Amount" })}</td>
+                {!readOnly && (
+                  <td style={{ ...td, width: 34 }}>
+                    <button type="button" onClick={() => removeLine(index)} aria-label={`Remove parts line ${index + 1}`} className="p-1 hover:opacity-60" style={{ color: C.mute, marginTop: 4 }}><X size={14} /></button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+          {!readOnly && (
+            <tfoot>
+              <tr>
+                <td colSpan={9} style={{ padding: "6px 8px", background: C.soft }}>
+                  <Btn small icon={Plus} onClick={addLine}>Add part</Btn>
+                </td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+
+      {section("Contracted repairs")}
+      {field("Vendor", text("vendor"))}
+      {field("Address", text("vendorAddress"))}
+      {field("Date (finish)", date("finishedOn", setFinished), { hint: span(vals.finishedOn) ? `From the start date ${span(vals.finishedOn)}` : "How long the job ran shows here once both dates are set" })}
+      <div className="col-span-2 sm:col-span-1 grid grid-cols-2 gap-x-4">
+        {field("Parts", <input type="number" min="0" step="0.01" style={{ ...box, fontFamily: MONO }} value={vals.partsTotal ?? ""} readOnly={readOnly} onChange={(e) => set("partsTotal", e.target.value)} />, { hint: "Total of the parts lines" })}
+        {field("Labor", <input type="number" min="0" step="0.01" style={{ ...box, fontFamily: MONO }} value={vals.laborTotal ?? ""} readOnly={readOnly} onChange={(e) => set("laborTotal", e.target.value)} />, { hint: "Total labor cost" })}
+      </div>
+
+      {section("Completion")}
+      {field("Date completed", date("completedOn"), { hint: span(vals.completedOn) ? `Duration from the start date ${span(vals.completedOn)}` : "Follows the finish date until you set it" })}
+      {field("Idle time / downtime", text("downtime"))}
+      {field("Mechanic operator signature", text("mechanicOperator"))}
+      {field("Assistant supervisor", text("assistantSupervisor"))}
+      {field("Supervisor", text("supervisor"))}
+      {field("Department head / General manager", text("departmentHead"))}
+      {field("Remarks", area("remarks", 3), { full: true })}
+
+      {/* kept with the record, never printed: the ERO sheet does not know
+          these exist */}
+      {section("Attachments")}
+      {field("Files kept with this record", (
+        <AttachmentRows
+          f={{ plain: true, readOnly, accept: HISTORY_ACCEPT, onOpen: onOpenFile,
+            empty: readOnly ? "No files were kept with this record." : "Nothing attached yet. A quotation, an invoice, a photo of the failed part or the signed sheet can go on here." }}
+          value={vals.files} onChange={(v) => set("files", v)} />
+      ), { full: true, hint: readOnly ? undefined : "Optional. PDF, Word (DOC or DOCX), JPG or PNG, up to 10 MB each. These stay with the record only: the ERO form, its PDF and the printed sheet never show them." })}
+    </div>
+    {err && (
+      <div className="mx-5 mb-3 flex items-start gap-2 px-3 py-2" style={{ background: STAGES.broken.tint, color: STAGES.broken.color, fontSize: 13, lineHeight: 1.45 }}>
+        <AlertCircle size={14} style={{ marginTop: 2, flexShrink: 0 }} />
+        <span>{err}</span>
+      </div>
+    )}
+    </div>
+    <div className="flex flex-wrap items-center gap-2 px-5 py-4" style={{ borderTop: `1px solid ${C.ruleSoft}`, background: C.soft, flexShrink: 0 }}>
+      {showBack && <Btn small icon={ChevronLeft} onClick={onBack} disabled={busy}>Back to list</Btn>}
+      {onOpenForm && <Btn small icon={FileText} onClick={onOpenForm} disabled={busy}>ERO form</Btn>}
+      {canDelete && <Btn small kind="danger" icon={Trash2} onClick={onDelete} disabled={busy}>Delete record</Btn>}
+      <span className="flex-1" />
+      <Btn onClick={onCancel} disabled={busy}>Cancel</Btn>
+      {!readOnly && <Btn kind="solid" onClick={go} disabled={busy}>{busy ? "Saving…" : record ? "Save changes" : "Save record"}</Btn>}
+    </div>
+  </>);
+}
+
 function MaintenanceTab({ plans, assets, onAdd, onLog, onEdit, onDelete, onOpenAsset, canManage = false, canDelete = false }) {
   const [scope, setScope] = useState("30");
   const [open, setOpen] = useState(null);
@@ -5782,7 +6807,7 @@ function MaintenanceTab({ plans, assets, onAdd, onLog, onEdit, onDelete, onOpenA
             style={{ borderRadius: 10, border: `1px solid ${scope === k ? C.brandEdge : C.rule}`, background: scope === k ? C.brand : C.surface, color: scope === k ? C.brandInk : C.ink, fontWeight: 600 }}>{l}</button>
         ))}
       </div>
-      {canManage && <Btn kind="solid" icon={Plus} onClick={onAdd}>Add schedule</Btn>}
+      {canManage && <Btn kind="solid" icon={Plus} onClick={onAdd}>Add Maintenance</Btn>}
     </div>
 
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
