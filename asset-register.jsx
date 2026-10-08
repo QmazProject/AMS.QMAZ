@@ -2575,8 +2575,8 @@ const CHROME_CSS = `
 @keyframes ams-slide{from{opacity:0;transform:translateX(26px)}to{opacity:1;transform:none}}
 
 /* Record numbers on a light plate with a red left stripe. */
-.ams-tag{display:inline-flex;flex-shrink:0;max-width:100%;align-items:center;padding:2px 7px 2px 6px;border-left:3px solid var(--ams-red);border-radius:4px;
-  background:var(--ams-plate);color:var(--ams-on-plate);font-family:${MONO};font-size:11px;font-weight:700;letter-spacing:.06em;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ams-tag{display:inline-flex;flex-shrink:0;max-width:100%;align-items:center;padding:0 7px;border-left:4px solid var(--ams-red);border-radius:3px;
+  background:var(--ams-plate);color:var(--ams-on-plate);font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:.03em;line-height:21px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ams-tag[data-big="1"]{padding:4px 12px 4px 10px;border-left-width:5px;border-radius:6px;font-size:22px;letter-spacing:.05em;line-height:1.2}
 
 /* ------------------------------------------------------------------------
@@ -2682,6 +2682,28 @@ textarea.ams-input{resize:vertical;line-height:1.5}
   .ams-sticker-qr{width:96px;padding:10px 8px}
   .ams-log-row{grid-template-columns:86px minmax(0,1fr);gap:10px;padding:11px 12px}
 }
+
+/* The asset list as a table, after the reference build's .panel/.tbl/.chip. */
+.ams-panel{min-width:0;overflow:hidden;border:1px solid var(--ams-line-soft);border-radius:10px;background:var(--ams-surface)}
+.ams-tblwrap{overflow-x:auto}
+/* wide enough that a narrow screen scrolls the table sideways rather than
+   squeezing every column into a tall stack of wrapped words */
+.ams-tbl{width:100%;min-width:960px;border-collapse:collapse;font-size:13px}
+.ams-tbl th{padding:10px 12px;border-bottom:1px solid var(--ams-line-soft);background:var(--ams-well);color:var(--ams-dim);font-size:12px;font-weight:500;text-align:left;white-space:nowrap}
+.ams-tbl td{padding:10px 12px;border-bottom:1px solid var(--ams-line-soft);color:var(--ams-text);vertical-align:top}
+.ams-tbl tbody tr:last-child td{border-bottom:0}
+.ams-tbl-click{cursor:pointer}
+.ams-tbl-click:hover td{background:var(--ams-surface-2)}
+.ams-tbl-click:focus-visible{outline:2px solid var(--ams-sand);outline-offset:-2px}
+.ams-tbl-strong{font-weight:600}
+.ams-tbl-sub{display:block;color:var(--ams-dim);font-size:12px}
+.ams-chip{--c:#999;display:inline-flex;align-items:center;gap:6px;padding:2px 10px 2px 8px;border-radius:999px;
+  background:color-mix(in srgb,var(--c) 20%,transparent);color:color-mix(in srgb,var(--c) 45%,#fff);font-size:12px;font-weight:500;line-height:18px;white-space:nowrap}
+.ams-chip-dot{width:8px;height:8px;flex-shrink:0;border-radius:50%;background:var(--c)}
+.ams-due{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;white-space:nowrap}
+.ams-empty{display:flex;flex-direction:column;align-items:center;gap:12px;padding:48px 20px;text-align:center}
+.ams-empty-title{color:var(--ams-head);font-size:14px;font-weight:500}
+.ams-empty-sub{color:var(--ams-mute);font-size:13px}
 
 /* Toasts: bottom right, a light plate with a sand edge, or red for errors. */
 .ams-toasts{position:fixed;right:20px;bottom:20px;z-index:50;display:flex;width:min(400px,calc(100vw - 28px));flex-direction:column;gap:10px}
@@ -3468,13 +3490,12 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
     return c;
   }, [scoped, bucketOf]);
 
-  /* Newest registration first. Somebody who has just added a machine expects to
-     see it without scrolling, and the oldest end of the register is the part
-     nobody is looking for. Sorting by tag as text put AST-10 before AST-2, so
-     the number is read as a number where a timestamp is missing. */
+  /* In asset-number order, as in the reference build, so a newly saved asset
+     takes its place in the sequence. The number is read as a number - sorting
+     the tag as text put AST-10 before AST-2. */
   const shown = useMemo(() => scoped
     .filter((a) => filter === "all" || bucketOf(a) === filter)
-    .sort((a, b) => String(b.created || "").localeCompare(String(a.created || "")) || assetSeq(b) - assetSeq(a)),
+    .sort((a, b) => assetSeq(a) - assetSeq(b) || String(a.tag).localeCompare(String(b.tag))),
   [scoped, filter, bucketOf]);
 
   /* A scanner types the sticker code in one burst; an exact match opens it. */
@@ -4176,97 +4197,57 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
             )}
           </div>
 
-          {/* every asset, full width; a row opens its record in the drawer */}
-          <div className="ams-table-frame overflow-hidden" style={{ background: C.surface }}>
-            {shown.length === 0 ? (
-              <div className="px-5 py-12 text-center">
-                <div style={{ fontSize: 14, marginBottom: 4 }}>{allowedAssets.length === 0 ? "No assets are available in your assigned scope." : "No assets match these filters."}</div>
-                <div style={{ fontSize: 13, color: C.mute }}>{allowedAssets.length === 0 ? "Ask a Super Admin to review your company and asset-group assignments." : "Widen a dropdown or clear the filters to see more."}</div>
+          {/* Every asset as a row under a header, as in the reference build; a
+              row opens its record in the drawer, by click or by Enter. */}
+          <div className="ams-panel">
+            {allowedAssets.length === 0 ? (
+              <div className="ams-empty">
+                <div className="ams-empty-title">No assets registered yet</div>
+                {can("asset.create")
+                  ? <Btn kind="solid" icon={Plus} onClick={() => setDlg({ kind: "asset", name: "register" })}>Register asset</Btn>
+                  : <div className="ams-empty-sub">Ask a Super Admin to review your company and asset-group assignments.</div>}
               </div>
-            ) : shown.map((a) => {
-              const s = availOf(a, openJob(a.id));
-              const dueHere = plansOf(a.id).filter((p) => daysUntil(p.nextDue) <= 30).sort((x, y) => dueOf(x).rank - dueOf(y).rank)[0];
-              return (
-                /* the row is a wrapper rather than one button, because the
-                   cart toggle beside it cannot be nested inside one */
-                <div key={a.id} className="ams-list-row flex items-stretch"
-                  style={{ borderBottom: `1px solid ${C.ruleSoft}`, background: sel === a.id ? C.soft : "transparent", borderLeft: `3px solid ${sel === a.id ? s.color : "transparent"}` }}>
-                  <button type="button" onClick={() => setSel(a.id)} className="min-w-0 flex-1 text-left px-4 py-3 flex gap-3 items-center">
-                  {/* The picture carries the left of the row, because a
-                      yard is remembered by machines rather than by asset
-                      numbers. Rows without one keep the same frame, so
-                      everything to the right still lines up down the list,
-                      and where there is more than one photograph the count
-                      says so rather than hiding the rest. */}
-                  <span className="relative shrink-0" style={{ width: 52, height: 52 }}>
-                    {a.photoUrl ? (
-                      <img src={a.photoUrl} alt={`Asset image — ${a.tag}`} title={`Asset image — ${a.tag}`}
-                        style={{ width: "100%", height: "100%", display: "block", objectFit: "cover",
-                          borderRadius: 7, border: `1px solid ${C.ruleSoft}`, background: C.soft }} />
-                    ) : (
-                      <span aria-hidden="true" title={`No asset image — ${a.tag}`}
-                        style={{ width: "100%", height: "100%", display: "grid", placeItems: "center",
-                          borderRadius: 7, border: `1px solid ${C.ruleSoft}`, background: C.soft }}>
-                        <ImgIcon src="/icon/No%20Image.png" size={19} style={{ color: C.dim }} />
-                      </span>
-                    )}
-                    {a.images?.length > 1 && (
-                      <span aria-hidden="true" title={`${a.images.length} images`}
-                        style={{ position: "absolute", right: -5, bottom: -5, minWidth: 18, height: 18,
-                          padding: "0 4px", display: "grid", placeItems: "center", borderRadius: 999,
-                          background: C.surface, border: `1px solid ${C.rule}`,
-                          fontFamily: MONO, fontSize: 9.5, fontWeight: 700, color: C.mute }}>
-                        {a.images.length}
-                      </span>
-                    )}
-                  </span>
-                  {/* a rule, not a gap: it separates the machine from what
-                      the register knows about it without cutting the row */}
-                  <span aria-hidden="true" style={{ width: 1, alignSelf: "stretch", flexShrink: 0, background: C.ruleSoft }} />
-                  <div className="min-w-0 flex-1">
-                    {/* the number identifies it, the pill says whether it
-                        is anywhere it can be used from - one line, because
-                        they are read together */}
-                    <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-                      <RecordTag>{a.tag}</RecordTag>
-                      {/* tint alone, no border: the colours here are CSS
-                          variables, and "var(--x)22" is not a colour - the
-                          declaration is simply dropped */}
-                      <span className="uppercase shrink-0" style={{ fontFamily: SANS, fontSize: 9, fontWeight: 800, letterSpacing: "0.06em",
-                        color: s.color, background: s.tint, borderRadius: 20, padding: "2px 7px" }}>{s.label}</span>
-                    </div>
-                    <div className="truncate" style={{ fontSize: 14, fontWeight: 600, marginTop: 3, lineHeight: 1.25 }}>{a.name}</div>
-                    <div className="flex items-center gap-1.5 mt-1" style={{ fontSize: 12, color: C.mute, minWidth: 0 }}>
-                      <MapPin size={11} style={{ flexShrink: 0, color: C.dim }} />
-                      <span className="truncate">{a.location}</span>
-                      <span aria-hidden="true" style={{ flexShrink: 0, color: C.rule }}>·</span>
-                      <span className="truncate">{a.custodian}</span>
-                      {dueHere && <CalendarClock size={12} style={{ marginLeft: "auto", flexShrink: 0, color: dueOf(dueHere).color }} />}
-                    </div>
-                  </div>
-                  </button>
-                  {can("asset.transfer") && (cartable(a) ? (
-                    <button type="button" onClick={() => askAddToCart(a)} aria-pressed={inCart(a.id)}
-                      title={inCart(a.id) ? `Remove ${a.tag} from the transfer cart` : `Add ${a.tag} to the transfer cart`}
-                      aria-label={inCart(a.id) ? `Remove ${a.tag} from the transfer cart` : `Add ${a.tag} to the transfer cart`}
-                      className="flex items-center justify-center hover:opacity-70"
-                      style={{ width: 40, color: C.dim, background: inCart(a.id) ? TINT.ok : "transparent", borderLeft: `1px solid ${C.ruleSoft}` }}>
-                      {/* once it is in the cart the control stops being an
-                          invitation and becomes a receipt: the trolley is
-                          replaced by a green tick, which lands with the tap
-                          that put the asset there and then sits still */}
-                      {inCart(a.id)
-                        ? <CheckCircle2 size={16} strokeWidth={2.4} className="ams-cart-tick" />
-                        : <ImgIcon src="/icon/add-to-cart.png" size={17} />}
-                    </button>
-                  ) : (
-                    /* the column stays, so the rows above and below it do
-                       not shift; only the control is gone */
-                    <span aria-hidden="true" className="px-3" style={{ width: 40, borderLeft: `1px solid ${C.ruleSoft}` }} />
-                  ))}
-                </div>
-              );
-            })}
+            ) : shown.length === 0 ? (
+              <div className="ams-empty">
+                <div className="ams-empty-title">No assets match these filters</div>
+                <Btn icon={X} onClick={() => { setQ(""); setCat(""); setLoc(""); setComp(""); setFilter("all"); }}>Clear filters</Btn>
+              </div>
+            ) : (
+              <div className="ams-tblwrap">
+                <table className="ams-tbl">
+                  <thead><tr>
+                    <th>Asset no.</th><th>Asset</th><th>Company</th><th>Project/Location</th>
+                    <th>Responsible person</th><th>Availability</th>
+                    <th><span className="sr-only">Maintenance due</span></th>
+                  </tr></thead>
+                  <tbody>
+                    {shown.map((a) => {
+                      const s = availOf(a, openJob(a.id));
+                      const dueHere = plansOf(a.id).filter((p) => daysUntil(p.nextDue) <= 30).sort((x, y) => dueOf(x).rank - dueOf(y).rank)[0];
+                      const left = dueHere ? daysUntil(dueHere.nextDue) : null;
+                      return (
+                        <tr key={a.id} className="ams-tbl-click" tabIndex={0} onClick={() => setSel(a.id)}
+                          onKeyDown={(e) => { if (e.key === "Enter") setSel(a.id); }}>
+                          <td><RecordTag>{a.tag}</RecordTag></td>
+                          <td><span className="ams-tbl-strong">{a.name}</span><span className="ams-tbl-sub">{a.category || "No category"}</span></td>
+                          <td>{a.company || <span className="ams-tbl-sub">Not recorded</span>}</td>
+                          <td>{a.project || NO_PROJECT}<span className="ams-tbl-sub">{a.location}</span></td>
+                          <td>{a.custodian}</td>
+                          <td><span className="ams-chip" style={{ "--c": s.color }}><span className="ams-chip-dot" />{s.label}</span></td>
+                          <td>
+                            {dueHere && (
+                              <span className="ams-due" style={{ color: dueOf(dueHere).color }} title={`${dueHere.name} due ${fmt(dueHere.nextDue)}`}>
+                                <CalendarClock size={14} aria-hidden="true" />{left < 0 ? "Overdue" : left === 0 ? "Today" : `${left} d`}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </>)}
 
