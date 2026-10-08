@@ -6,7 +6,7 @@ import * as XLSX from "xlsx";
 import {
   Plus, Search, ArrowLeftRight, Wrench, Archive, Pencil, Trash2, ChevronLeft,
   Download, Upload, X, RotateCcw, CircleDot, AlertCircle, AlertTriangle,
-  ChevronRight, ChevronDown, Package, ShoppingBasket, ClipboardList, CalendarClock, CalendarCheck, BarChart3, Repeat, Coins, QrCode, ShoppingCart, Receipt, Paperclip, Settings, Building2, Tag, MapPin, Map as MapIcon, Layers,
+  ChevronRight, ChevronDown, Package, ShoppingBasket, ClipboardList, CalendarClock, CalendarCheck, BarChart3, Coins, QrCode, ShoppingCart, Receipt, Paperclip, Settings, Building2, Tag, MapPin, Map as MapIcon, Layers,
   Users, CheckCircle2, Printer, Eye, FileText, Hash,
 } from "lucide-react";
 import UserManagement from "./src/UserManagement.jsx";
@@ -237,9 +237,6 @@ CATEGORY_ACTIONS.editCategory = {
 };
 
 const NO_PROJECT = "X";
-
-/* An asset that has been handed on carries a movement in its history. */
-const hasMoved = (a) => (a?.history || []).some((h) => h.kind === "transfer");
 
 /* Whatever the asset already holds stays selectable, so one recorded before
    this list existed can still be saved without renaming its person. */
@@ -705,49 +702,8 @@ const ASSET_ACTIONS = {
     },
     validate: checkUnique,
   },
-  edit: {
-    title: "Edit details", submit: "Save changes",
-    fields: (a, x, v = {}) => {
-      const cat = v.category ?? a.category ?? "";
-      return [
-      { key: "tag", label: "Asset number", required: true, value: a.tag, mono: true },
-      { key: "code", label: "Asset code (QR sticker)", mono: true, value: a.code, hint: "Change this only if the sticker was replaced" },
-      { key: "company", label: "Company", type: "select", options: x.companyNames, value: a.company, required: x.companyNames.length > 0 },
-      { key: "name", label: "What is it", required: true, value: a.name },
-      { key: "category", label: "Category", type: "select", options: x.categoryNames, value: a.category },
-      { key: "brand", label: "Brand/Manufacturer", type: "select", value: a.brand,
-        options: withCurrent(x.brandNames, a.brand),
-        hint: "Configured under Settings — Brands and models." },
-      { key: "model", label: "Model", type: "select", value: a.model,
-        options: withCurrent(x.modelsOf(v.brand ?? a.brand), (v.brand ?? a.brand) === a.brand ? a.model : ""),
-        derivedOn: (v.brand ?? a.brand) || "", derived: "",
-        hint: !(v.brand ?? a.brand) ? "Choose a brand first." : null },
-      { key: "serial", label: serialLabel(cat), value: a.serial, mono: true },
-      ...vehicleFields(cat, a),
-      ...bodyField(cat, { key: "body", label: "Body number", value: a.body, mono: true }),
-      { key: "acquired", label: "Date acquired", type: "date", value: a.acquired },
-      { key: "cost", label: "Acquisition cost", type: "number", value: a.cost },
-      /* Correctable while the asset has never moved; once it has, the transfer
-         trail owns who holds it and editing here would rewrite that silently. */
-      ...(hasMoved(a)
-        ? [{ key: "custodian", label: "Responsible person", value: a.custodian, readOnly: true,
-            hint: "Set by the last transfer. Use Transfer to hand this asset to someone else." }]
-        : [{ key: "custodian", label: "Responsible person", required: true, type: "select",
-            options: peopleWith(x.people, a.custodian), value: a.custodian,
-            hint: "Configured under Settings — Responsible persons." }]),
-      { key: "photos", label: "Asset images", type: "images", full: true, value: imageEntries(a),
-        accept: PHOTO_TYPES,
-        empty: "This asset has no images yet.",
-        hint: "JPG, PNG, WEBP, GIF or HEIC, up to 10 MB each. The one marked Default is what the register shows wherever it has room for a single picture — beside the asset in the list, and at the top of this panel." },
-      { key: "files", label: "Documents", type: "files", full: true, value: docEntries(a),
-        accept: DOC_ACCEPT, onOpen: x.openFile,
-        empty: "No documents are filed against this asset yet.",
-        hint: "PDF, JPG or PNG, up to 10 MB each. Give each one a type so it can be found by what it is rather than by who filed it." },
-      { key: "notes", label: "Notes", type: "textarea", value: a.notes, full: true },
-      ];
-    },
-    validate: checkUnique,
-  },
+  /* the form itself is AssetForm, shared with register */
+  edit: { title: "Edit details", submit: "Save changes" },
   transfer: {
     title: "Transfer asset", submit: "Record transfer",
     /* The paperwork travels with the asset, so it can be run off while the
@@ -990,33 +946,6 @@ const MetricTile = ({ label, value, tone = C.ink, hint }) => (
 const RecordTag = ({ children, big, style }) => (
   <span className="ams-tag" data-big={big ? "1" : undefined} style={style}>{children}</span>
 );
-
-/* A group of facts under a small heading, drawn as a grid with 1px lines.
-   The last fact stretches across whatever is left of its row, so the grid
-   never ends in an empty cell, at either column count. */
-function FactGroup({ title, facts, note }) {
-  const fill = (cols) => cols - ((facts.length - 1) % cols);
-  return (
-    <section className="ams-facts-group">
-      <div className="ams-facts-head">{title}</div>
-      <div className="ams-facts">
-        {facts.map(([label, value, mono], index) => (
-          <div key={label} className="ams-fact"
-            {...(index === facts.length - 1 ? { "data-fill": "1", style: { "--s2": fill(2), "--s3": fill(3) } } : {})}>
-            <Label>{label}</Label>
-            <div style={{ fontFamily: mono ? MONO : SANS, fontSize: 13.5, color: C.head, wordBreak: "break-word" }}>{value || "—"}</div>
-          </div>
-        ))}
-        {note && (
-          <div className="ams-fact" style={{ gridColumn: "1 / -1" }}>
-            <Label>Notes</Label>
-            <div style={{ fontSize: 13.5, lineHeight: 1.5 }}>{note}</div>
-          </div>
-        )}
-      </div>
-    </section>
-  );
-}
 
 /* An icon drawn from an image file in public/icon. A black silhouette is used
    as a mask over the control's own text colour, so it follows the button the
@@ -2117,6 +2046,275 @@ function Dialog({ def, subject, header, ctx, onCancel, onSubmit, busy = false })
   );
 }
 
+/* =========================================================================
+   The asset form: Register asset, and Edit for an asset already on the
+   register. One form for both, in four sections - Asset, Identification,
+   Assignment, Acquisition - laid out as in the reference build.
+
+   Identification follows the category: the identifiers a category carries
+   are shown, and the ones it does not are hidden and cleared the moment the
+   category changes, so nothing typed under the old one rides along unseen.
+
+   Required fields say so under themselves, but only once a save has been
+   tried; a form that turns red before anyone has typed is shouting. A
+   duplicate identifier is different - it is said as it is typed, because
+   finding out after filling in everything else is worse.
+   ========================================================================= */
+const ID_SHORT = { engine: "engine", plate: "plate", mvFile: "MV file", conduction: "conduction" };
+/* identifiers compare without case or spaces: "ABC 1234" and "abc1234" are
+   the same plate */
+const idKey = (v) => String(v ?? "").replace(/\s+/g, "").toLowerCase();
+const listWords = (words) => (words.length < 2 ? words.join("") : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`);
+const identifierLine = (cat) => {
+  if (!cat) return "Select a category to show its identification fields.";
+  const words = [catKind(cat) === "other" ? "Serial number" : "Serial/chassis", ...vehicleKeys(cat).map((k) => ID_SHORT[k])];
+  return `${listWords(words)} for this category`;
+};
+const ASSET_FORM_LABELS = {
+  tag: "Asset number", code: "Asset code", company: "Company", name: "Asset name", category: "Category",
+  brand: "Brand/Manufacturer", model: "Model", body: "Body number", serial: "Serial number",
+  engine: "Engine number", plate: "Plate number", mvFile: "MV file number", conduction: "Conduction sticker",
+  acquired: "Date acquired", cost: "Acquisition cost", notes: "Notes", photos: "Images", files: "Documents",
+};
+const ASSET_TEXT_KEYS = ["tag", "code", "company", "name", "category", "brand", "model", "body", "serial", "engine", "plate", "mvFile", "conduction",
+  "project", "location", "custodian", "acquired", "cost", "notes"];
+
+function AssetForm({ mode, asset, ctx, busy = false, serverError = "", onCancel, onSubmit }) {
+  const editing = mode === "edit";
+  const titleId = useId();
+  const panel = useRef(null);
+  const [opened] = useState(() => {
+    const a = asset || {};
+    return editing ? {
+      ...Object.fromEntries(ASSET_TEXT_KEYS.map((k) => [k, a[k] ?? ""])),
+      project: a.project && a.project !== NO_PROJECT ? a.project : NO_PROJECT,
+      photos: imageEntries(a), files: docEntries(a),
+    } : {
+      ...Object.fromEntries(ASSET_TEXT_KEYS.map((k) => [k, ""])),
+      tag: ctx.nextTag, acquired: today(), photos: [], files: [],
+    };
+  });
+  const [vals, setVals] = useState(opened);
+  const [tried, setTried] = useState(false);
+  const [askDiscard, setAskDiscard] = useState(false);
+
+  const cat = vals.category;
+  /* with no categories set up there is nothing to choose, so the plain serial
+     number is offered rather than no identifiers at all */
+  const catChosen = !!cat || ctx.categoryNames.length === 0;
+  const idKeys = catChosen ? ["serial", ...vehicleKeys(cat)] : [];
+  const bodyShown = hasBodyNumber(cat);
+  const site = ctx.projects.find((pr) => pr.pid === vals.project);
+
+  const set = (key, value) => setVals((now) => {
+    const next = { ...now, [key]: value };
+    if (key === "category") {
+      /* fields the new category does not carry are hidden, and cleared */
+      const keep = new Set([...(value || ctx.categoryNames.length === 0 ? ["serial", ...vehicleKeys(value)] : []), ...(hasBodyNumber(value) ? ["body"] : [])]);
+      ["serial", ...VEHICLE_ONLY, "body"].forEach((k) => { if (!keep.has(k)) next[k] = ""; });
+    }
+    /* a model belongs to its make */
+    if (key === "brand" && value !== now.brand) next.model = "";
+    /* a site brings its own address; X is typed by hand */
+    if (key === "project") {
+      const pr = ctx.projects.find((one) => one.pid === value);
+      next.location = pr ? pr.location : value === NO_PROJECT && now.project !== NO_PROJECT ? "" : value ? now.location : "";
+    }
+    return next;
+  });
+
+  /* what has to be filled in, as the reference marks it */
+  /* in an edit the assignment is read-only, so it is shown rather than asked for */
+  const required = [
+    "tag", "name", ...(editing ? [] : ["project", "location", "custodian"]),
+    ...(ctx.companyNames.length ? ["company"] : []),
+    ...(ctx.categoryNames.length ? ["category"] : []),
+  ];
+  const missing = new Set(required.filter((k) => !String(vals[k] ?? "").trim()));
+
+  /* identifiers already on another asset, checked as they are typed */
+  const checked = ["tag", "code", ...(bodyShown ? ["body"] : []), ...idKeys];
+  const clashes = Object.fromEntries(checked.map((k) => {
+    const owner = ctx.idOwners?.[k]?.[idKey(vals[k])];
+    return [k, idKey(vals[k]) && owner && owner.id !== asset?.id ? owner : null];
+  }).filter(([, owner]) => owner));
+  const clashed = Object.keys(clashes).length > 0;
+
+  /* documents and photographs carry rules of their own, kept from the form
+     this replaces */
+  const fileProblem = (() => {
+    const untyped = (vals.files || []).find((row) => !docTypeValue(row));
+    if (untyped) return `Choose a type for ${untyped.label || untyped.file?.name || "each document"}.`;
+    const heavy = (vals.files || []).find((row) => row.file && row.file.size > DOC_LIMIT && !String(row.file.type || "").startsWith("image/"));
+    if (heavy) return `${heavy.file.name} is ${kb(heavy.file.size)}. The limit is 10 MB per document.`;
+    return "";
+  })();
+
+  const changedKeys = Object.keys(ASSET_FORM_LABELS).filter((k) => {
+    if (k === "photos" || k === "files") return !sameRows(vals[k] || [], opened[k] || []) || (vals[k] || []).some((row) => row.file instanceof File);
+    return String(vals[k] ?? "").trim() !== String(opened[k] ?? "").trim();
+  });
+  const dirty = changedKeys.length > 0 || ["project", "location", "custodian"].some((k) => String(vals[k] ?? "") !== String(opened[k] ?? ""));
+
+  const requestClose = () => {
+    if (busy) return;
+    if (dirty) return setAskDiscard(true);
+    onCancel();
+  };
+  useEscapeKey(!busy, requestClose);
+  useEscapeKey(askDiscard, () => setAskDiscard(false));
+  useDialogFocus(panel);
+
+  const save = () => {
+    setTried(true);
+    if (clashed || missing.size || fileProblem) return;
+    /* an edit that changes nothing has nothing to save */
+    if (editing && !changedKeys.length) return onCancel();
+    const out = { ...vals };
+    ["serial", ...VEHICLE_ONLY].forEach((k) => { if (!idKeys.includes(k)) out[k] = ""; });
+    if (!bodyShown) out.body = "";
+    onSubmit(out, { changed: changedKeys.map((k) => (k === "serial" ? serialLabel(cat) : ASSET_FORM_LABELS[k]).toLowerCase()) });
+  };
+
+  const message = clashed ? "An identifier is already on another asset. Change it to save."
+    : tried && missing.size ? "Complete the highlighted fields."
+      : tried && fileProblem ? fileProblem
+        : serverError;
+
+  const errorOf = (key) => clashes[key]
+    ? `Already on ${clashes[key].tag} (${clashes[key].name})`
+    : tried && missing.has(key) ? "Required" : "";
+
+  /* one field: its label, the control, then whichever of error or hint applies */
+  const field = (key, label, control, { hint, full, mark = required.includes(key) } = {}) => {
+    const error = errorOf(key);
+    return (
+      <div key={key} className="ams-field" data-full={full ? "1" : undefined}>
+        <label htmlFor={`${titleId}-${key}`}>{label}{mark && <span className="ams-req"> *</span>}</label>
+        {control(error)}
+        {error ? <div className="ams-field-error">{error}</div> : hint ? <div className="ams-field-hint">{hint}</div> : null}
+      </div>
+    );
+  };
+  const text = (key, { mono, placeholder, type = "text", locked, list } = {}) => (error) => (
+    <>
+      <input id={`${titleId}-${key}`} type={type} className="ams-input" value={vals[key] ?? ""}
+        readOnly={locked} data-locked={locked ? "1" : undefined} aria-invalid={error ? "true" : undefined}
+        placeholder={placeholder} list={list && !locked ? `${titleId}-${key}-list` : undefined}
+        style={mono ? { fontFamily: MONO } : undefined}
+        onChange={(e) => set(key, e.target.value)} />
+      {list && !locked && <datalist id={`${titleId}-${key}-list`}>{list.map((o) => <option key={o} value={o} />)}</datalist>}
+    </>
+  );
+  const choose = (key, options, { locked, placeholder = "Select…" } = {}) => (error) => (
+    <select id={`${titleId}-${key}`} className="ams-input" value={vals[key] ?? ""} disabled={locked}
+      data-locked={locked ? "1" : undefined} aria-invalid={error ? "true" : undefined}
+      onChange={(e) => set(key, e.target.value)}>
+      <option value="">{placeholder}</option>
+      {options.map((o) => (typeof o === "string"
+        ? <option key={o} value={o}>{o}</option>
+        : <option key={o.value} value={o.value}>{o.label}</option>))}
+    </select>
+  );
+
+  const tagLocked = !editing && ctx.tagIsIssued;
+  const assignLocked = editing;
+
+  return (
+    <div className="ams-scrim fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6">
+      <div className="relative w-full" style={{ maxWidth: 860 }}>
+        <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className="ams-modal">
+          <div className="ams-modal-head">
+            <div id={titleId} className="ams-modal-title">{editing ? `Edit ${asset?.tag || "asset"}` : "Register asset"}</div>
+            <button type="button" className="ams-icon-btn" onClick={requestClose} disabled={busy} aria-label="Close"><X size={18} /></button>
+          </div>
+
+          <div className="ams-modal-body">
+            <section className="ams-form-section">
+              <div className="ams-form-section-title">Asset</div>
+              <div className="ams-form-grid">
+                {field("tag", "Asset number", text("tag", { mono: true, locked: tagLocked }), {
+                  hint: editing ? null : tagLocked ? "Next number in sequence, issued by the system when you save" : "Next number in sequence; change it if needed" })}
+                {field("code", "Asset code (QR sticker)", text("code", { mono: true, placeholder: "Scan or type the sticker code" }))}
+                {field("company", "Company", choose("company", ctx.companyNames), {
+                  hint: ctx.companyNames.length ? null : "Add companies under Settings first" })}
+                {field("name", "Asset name", text("name", { placeholder: "e.g. Dell Latitude 5440" }))}
+                {field("category", "Category", choose("category", ctx.categoryNames), { hint: "Sets the identification fields below" })}
+                {bodyShown && field("body", "Body number", text("body", { mono: true, placeholder: "BN-14" }))}
+              </div>
+            </section>
+
+            <section className="ams-form-section">
+              <div className="ams-form-section-title">Identification</div>
+              <div className="ams-form-section-note">{ctx.categoryNames.length === 0 ? "Serial number, until categories are set up under Settings" : identifierLine(cat)}</div>
+              <div className="ams-form-grid">
+                {field("brand", "Brand/Manufacturer", choose("brand", withCurrent(ctx.brandNames, opened.brand)), {
+                  hint: ctx.brandNames.length ? null : "No brands set up yet. Add them under Settings first." })}
+                {field("model", "Model", choose("model", withCurrent(ctx.modelsOf(vals.brand), vals.brand === opened.brand ? opened.model : ""), { locked: !vals.brand }), {
+                  hint: !vals.brand ? "Choose a brand first." : null })}
+                {idKeys.map((k) => (k === "serial"
+                  ? field("serial", serialLabel(cat), text("serial", { mono: true }))
+                  : field(k, VEHICLE_FIELD_DEFS[k].label, text(k, { mono: true, placeholder: VEHICLE_FIELD_DEFS[k].placeholder }))))}
+              </div>
+            </section>
+
+            <section className="ams-form-section">
+              <div className="ams-form-section-title">Assignment</div>
+              {assignLocked && <div className="ams-form-section-note">Change these through Transfer so the chain of custody stays complete</div>}
+              <div className="ams-form-grid">
+                {field("project", "Project/Location", choose("project", [
+                  { value: NO_PROJECT, label: "X (not on a project site)" },
+                  ...ctx.projects.map((pr) => pr.pid),
+                ], { locked: assignLocked }))}
+                {field("location", "Address", text("location", { locked: assignLocked || vals.project !== NO_PROJECT, list: ctx.locations,
+                  placeholder: vals.project === NO_PROJECT ? "Type the address" : "" }), {
+                  hint: assignLocked ? null : site ? `Filled in from ${site.pid}` : vals.project === NO_PROJECT ? "Not a project site, so the address is typed" : "Choose a Project/Location first" })}
+                {field("custodian", "Responsible person", choose("custodian", peopleWith(ctx.people, opened.custodian), { locked: assignLocked }), {
+                  hint: assignLocked ? null : ctx.people.length ? "Custodian at the time of registration" : "No one is configured yet. Add people under Settings first." })}
+              </div>
+            </section>
+
+            <section className="ams-form-section">
+              <div className="ams-form-section-title">Acquisition</div>
+              <div className="ams-form-grid">
+                {field("acquired", "Date acquired", text("acquired", { type: "date" }), {
+                  hint: editing ? null : "Also dates the first entry in the transfer history" })}
+                {field("cost", "Acquisition cost (₱)", text("cost", { type: "number" }), { hint: "Used as the asset value in reports" })}
+                {field("notes", "Notes", () => (
+                  <textarea id={`${titleId}-notes`} className="ams-input" rows={3} value={vals.notes ?? ""} onChange={(e) => set("notes", e.target.value)} />
+                ), { full: true })}
+                <div className="ams-field" data-full="1">
+                  <label>Asset images</label>
+                  <AssetImageRows f={{ accept: PHOTO_TYPES, empty: editing ? "This asset has no images yet." : "No image yet. The first one added becomes the default, and you can change which that is." }}
+                    value={vals.photos} onChange={(v) => set("photos", v)} />
+                  <div className="ams-field-hint">JPG, PNG, WEBP, GIF or HEIC, up to 10 MB each.</div>
+                </div>
+                <div className="ams-field" data-full="1">
+                  <label>Documents</label>
+                  <AttachmentRows f={{ accept: DOC_ACCEPT, onOpen: ctx.openFile,
+                    empty: editing ? "No documents are filed against this asset yet." : "Nothing attached yet. The sales invoice, certificate of registration or deed of sale can go on now, or be added later." }}
+                    value={vals.files} onChange={(v) => set("files", v)} />
+                  <div className="ams-field-hint">PDF, JPG or PNG, up to 10 MB each. Give each one a type.</div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div className="ams-modal-foot">
+            <div className="ams-form-msg" role={message ? "alert" : undefined}>{message}</div>
+            <div className="ams-modal-actions">
+              <Btn onClick={requestClose} disabled={busy}>Cancel</Btn>
+              <Btn kind="solid" onClick={save} disabled={clashed || busy}>{busy ? "Saving…" : editing ? "Save changes" : "Register asset"}</Btn>
+            </div>
+          </div>
+
+          {askDiscard && <DiscardPrompt onKeep={() => setAskDiscard(false)} onDiscard={onCancel} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const Trail = ({ entries }) => (
   <div className="mt-3">
     {[...entries].reverse().map((h, i, arr) => (
@@ -2259,21 +2457,6 @@ const CHROME_CSS = `
 .ams-pop{z-index:60;padding:5px 0;border:1px solid var(--ams-line);border-radius:9px;background:var(--ams-surface-2);box-shadow:0 18px 55px rgba(0,0,0,.65);animation:ams-pop 140ms ease-out}
 @keyframes ams-pop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 .ams-cart-tick{color:var(--ams-ok);animation:ams-tick-pop 340ms cubic-bezier(.22,1.35,.4,1)}
-/* The detail panel keeps station beside the list instead of sitting at the top
-   of it. With two hundred assets on the register, scrolling to one near the
-   bottom and clicking it used to fill a panel a screen and a half above where
-   the user was looking, so the click appeared to do nothing. It sticks below
-   the topbar, and scrolls inside itself when the asset it is showing is taller
-   than what is left of the screen.
-
-   Below the md breakpoint there is no second column - selecting an asset
-   replaces the list - so there it goes back to scrolling with the page. */
-.ams-detail{position:sticky;top:74px;max-height:calc(100vh - 90px);overflow-y:auto;overscroll-behavior:contain;
- scrollbar-width:thin;scrollbar-color:var(--ams-line) transparent}
-.ams-detail::-webkit-scrollbar{width:8px}
-.ams-detail::-webkit-scrollbar-track{background:transparent}
-.ams-detail::-webkit-scrollbar-thumb{background:var(--ams-line);border-radius:20px}
-@media (max-width:767px){.ams-detail{position:static;max-height:none;overflow:visible}}
 .ams-strip{scrollbar-width:thin;scrollbar-color:var(--ams-line) transparent}
 .ams-strip::-webkit-scrollbar{height:8px}
 .ams-strip::-webkit-scrollbar-track{background:transparent}
@@ -2395,20 +2578,113 @@ const CHROME_CSS = `
 .ams-tag{display:inline-flex;flex-shrink:0;max-width:100%;align-items:center;padding:2px 7px 2px 6px;border-left:3px solid var(--ams-red);border-radius:4px;
   background:var(--ams-plate);color:var(--ams-on-plate);font-family:${MONO};font-size:11px;font-weight:700;letter-spacing:.06em;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ams-tag[data-big="1"]{padding:4px 12px 4px 10px;border-left-width:5px;border-radius:6px;font-size:22px;letter-spacing:.05em;line-height:1.2}
-/* Detail grids: grouped under small headings, 1px lines between the facts. */
-.ams-facts-group+.ams-facts-group{border-top:1px solid var(--ams-line-soft)}
-.ams-facts-head{padding:12px 20px 9px;color:var(--ams-sand-ink);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;background:var(--ams-surface)}
-/* columns follow the panel's own width, not the window's - beside the list
-   the panel is narrow even on a wide screen */
-.ams-facts-group{container-type:inline-size}
-.ams-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;border-top:1px solid var(--ams-line-soft);background:var(--ams-line-soft)}
-.ams-fact{min-width:0;padding:11px 20px 12px;background:var(--ams-surface-2)}
-.ams-fact .ams-label{overflow-wrap:anywhere}
-.ams-fact[data-fill="1"]{grid-column:span var(--s2)}
-@container (min-width:560px){.ams-facts{grid-template-columns:repeat(3,minmax(0,1fr))}.ams-fact[data-fill="1"]{grid-column:span var(--s3)}}
+
+/* ------------------------------------------------------------------------
+   The asset form (.ams-modal, .ams-form-*) and the asset record drawer
+   (.ams-drawer, .ams-sticker, .ams-tabs, .ams-dl, .ams-log), after the
+   reference build's ui-base.
+   ------------------------------------------------------------------------ */
+.ams-icon-btn{display:grid;width:32px;height:32px;flex-shrink:0;place-items:center;border:0;border-radius:8px;background:transparent;color:var(--ams-mute);cursor:pointer;transition:background 160ms ease,color 160ms ease}
+.ams-icon-btn:hover:not(:disabled){background:var(--ams-surface-2);color:var(--ams-head)}
+.ams-icon-btn:disabled{opacity:.4;cursor:not-allowed}
+
+.ams-modal{display:flex;width:100%;max-height:92vh;flex-direction:column;border:1px solid var(--ams-line);border-radius:14px;background:var(--ams-surface);outline:none}
+.ams-modal-head{display:flex;flex-shrink:0;align-items:center;justify-content:space-between;gap:12px;padding:16px 22px;border-bottom:1px solid var(--ams-line-soft)}
+.ams-modal-title{color:var(--ams-head);font-size:17px;font-weight:600}
+.ams-modal-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 22px 22px}
+.ams-modal-foot{display:flex;flex-shrink:0;flex-wrap:wrap;align-items:center;gap:10px;padding:14px 22px;border-top:1px solid var(--ams-line-soft);background:var(--ams-surface-2)}
+/* each section opens with a sand heading under a thin rule */
+.ams-form-section{margin-top:20px;padding-top:16px;border-top:1px solid var(--ams-line)}
+.ams-form-section:first-child{margin-top:0;padding-top:18px;border-top:0}
+.ams-form-section-title{color:var(--ams-sand);font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.ams-form-section-note{margin-top:3px;color:var(--ams-mute);font-size:12.5px;line-height:1.45}
+.ams-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px;margin-top:12px}
+.ams-field{min-width:0}
+.ams-field[data-full="1"]{grid-column:1/-1}
+.ams-field>label{display:block;margin-bottom:6px;color:var(--ams-dim);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.ams-req{color:var(--ams-alarm)}
+.ams-input{display:block;width:100%;min-height:42px;padding:9px 11px;border:1px solid var(--ams-line);border-radius:10px;background:var(--ams-well);color:var(--ams-text);font-family:${SANS};font-size:13.5px;outline:none}
+textarea.ams-input{resize:vertical;line-height:1.5}
+/* read-only: a dashed outline and no fill, so it reads as given rather than asked */
+.ams-input[data-locked="1"]{border-style:dashed;background:transparent;color:var(--ams-mute);cursor:not-allowed;opacity:1}
+.ams-input[aria-invalid="true"]{border-color:var(--ams-alarm);background:var(--ams-alarm-tint)}
+.ams-field-hint{margin-top:5px;color:var(--ams-mute);font-size:11.5px;line-height:1.4}
+.ams-field-error{margin-top:5px;color:var(--ams-alarm);font-size:11.5px;font-weight:500;line-height:1.4}
+.ams-form-msg{flex:1 1 200px;color:var(--ams-alarm);font-size:12.5px;font-weight:500;line-height:1.4}
+.ams-form-msg:empty{display:none}
+.ams-modal-actions{display:flex;gap:10px;margin-left:auto}
+
+/* the drawer: a fixed header in the panel colour over a body in the page colour */
+.ams-drawer-scrim{position:fixed;inset:0;z-index:50;background:rgba(22,26,25,.62);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);animation:ams-fade 200ms ease-out both}
+.ams-drawer{position:fixed;top:0;right:0;bottom:0;z-index:50;display:flex;width:min(900px,100vw);flex-direction:column;border-left:1px solid var(--ams-line);
+  background:var(--ams-bg);box-shadow:-24px 0 60px rgba(0,0,0,.45);outline:none;animation:ams-drawer-in 320ms cubic-bezier(.2,.8,.25,1) both}
+@keyframes ams-drawer-in{from{transform:translateX(100%)}to{transform:none}}
+.ams-drawer-head{flex-shrink:0;padding:12px 24px 0;border-bottom:1px solid var(--ams-line);background:var(--ams-surface)}
+.ams-drawer-top{display:flex;align-items:center;justify-content:space-between;color:var(--ams-dim);font-size:12px;font-weight:500}
+.ams-sticker{display:flex;margin-top:8px;overflow:hidden;border-left:10px solid var(--ams-red);border-radius:10px;background:var(--ams-plate);color:var(--ams-on-plate);box-shadow:0 8px 22px rgba(0,0,0,.28)}
+.ams-sticker-main{flex:1;min-width:0;padding:14px 18px 15px}
+.ams-sticker-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.ams-sticker-no{font-family:${MONO};font-size:26px;font-weight:700;letter-spacing:.1em;line-height:1.1}
+.ams-sticker-status{display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;background:var(--c);color:#1b201f;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+.ams-sticker-name{margin-top:6px;font-size:16px;font-weight:600;line-height:1.3;overflow-wrap:anywhere}
+.ams-sticker-meta{margin-top:2px;color:#5b6462;font-size:12.5px}
+.ams-sticker-qr{display:flex;width:132px;flex-shrink:0;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:12px;border-left:1px dashed rgba(45,51,50,.4);
+  color:#5b6462;font-size:11px;font-weight:600;text-align:center;overflow-wrap:anywhere}
+.ams-sticker-qr img{display:block;border-radius:3px;background:#fff}
+.ams-drawer-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:14px}
+.ams-link-danger{display:inline-flex;align-items:center;gap:6px;margin-left:auto;padding:6px 2px;border:0;background:transparent;color:var(--ams-alarm);font-size:12.5px;font-weight:600;cursor:pointer}
+.ams-link-danger:hover{text-decoration:underline}
+.ams-tabs{display:flex;gap:2px;margin-top:12px;overflow-x:auto;scrollbar-width:none}
+.ams-tabs::-webkit-scrollbar{display:none}
+.ams-tab{position:relative;display:inline-flex;align-items:center;gap:7px;padding:10px 12px 12px;border:0;background:transparent;color:var(--ams-mute);font-size:13px;font-weight:500;white-space:nowrap;cursor:pointer;transition:color 160ms ease}
+.ams-tab:hover{color:var(--ams-text)}
+.ams-tab:after{position:absolute;right:10px;bottom:0;left:10px;height:3px;border-radius:3px 3px 0 0;background:var(--ams-sand);content:"";transform:scaleX(0);transition:transform 200ms ease}
+.ams-tab[aria-selected="true"]{color:var(--ams-head);font-weight:600}
+.ams-tab[aria-selected="true"]:after{transform:scaleX(1)}
+.ams-tab-n{min-width:20px;padding:1px 6px;border-radius:999px;background:var(--ams-surface-2);color:var(--ams-mute);font-size:10.5px;font-weight:600;text-align:center}
+.ams-tab[aria-selected="true"] .ams-tab-n{background:var(--ams-sand-tint);color:var(--ams-sand)}
+.ams-drawer-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:18px 24px 32px}
+.ams-drawer-card{margin-bottom:14px;overflow:hidden;border:1px solid var(--ams-line-soft);border-radius:10px;background:var(--ams-surface)}
+/* details: small headings over two columns, 1px lines between the facts */
+.ams-dl-group+.ams-dl-group{margin-top:18px}
+.ams-dl-head{margin-bottom:8px;color:var(--ams-sand-ink);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.ams-dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;overflow:hidden;border:1px solid var(--ams-line-soft);border-radius:10px;background:var(--ams-line-soft)}
+.ams-dl-cell{min-width:0;padding:11px 16px 12px;background:var(--ams-surface)}
+.ams-dl-cell[data-span="1"]{grid-column:1/-1}
+.ams-dl-label{margin-bottom:4px;color:var(--ams-dim);font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase}
+.ams-dl-value{color:var(--ams-head);font-size:13.5px;overflow-wrap:anywhere}
+.ams-dl-empty{color:var(--ams-dim);font-size:13px;font-style:italic}
+/* history: the date in its own 104px column */
+.ams-log{overflow:hidden;border:1px solid var(--ams-line-soft);border-radius:10px;background:var(--ams-surface)}
+.ams-log-row{display:grid;grid-template-columns:104px minmax(0,1fr);gap:14px;padding:12px 16px;border-bottom:1px solid var(--ams-line-soft)}
+.ams-log-row:last-child{border-bottom:0}
+.ams-log-date{padding-top:1px;color:var(--ams-mute);font-family:${MONO};font-size:12px}
+.ams-log-text{display:flex;align-items:center;gap:8px;color:var(--ams-head);font-size:13.5px}
+.ams-log-sub{margin-top:2px;padding-left:15px;color:var(--ams-mute);font-size:12.5px}
+.ams-log-by{margin-top:3px;padding-left:15px;color:var(--ams-dim);font-size:11.5px}
+.ams-tab-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;color:var(--ams-mute);font-size:12.5px}
+.ams-tab-empty{padding:36px 16px;border:1px dashed var(--ams-line);border-radius:10px;color:var(--ams-mute);font-size:13px;text-align:center}
+.ams-from{margin-top:2px;color:var(--ams-dim);font-size:11.5px}
+.ams-current{margin-top:2px;color:var(--ams-ok);font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.ams-row-link{cursor:pointer}
+.ams-row-link:focus-visible{outline:2px solid var(--ams-sand);outline-offset:-2px}
+.ams-table tfoot td{padding:11px 12px!important;border-top:1px solid var(--ams-line);background:var(--ams-surface-2)}
+.ams-tfoot-label{color:var(--ams-mute);font-weight:600}
+@media (max-width:640px){
+  .ams-form-grid,.ams-dl{grid-template-columns:1fr}
+  .ams-modal{max-height:94vh}
+  .ams-modal-head,.ams-modal-foot{padding-inline:16px}
+  .ams-modal-body{padding:0 16px 18px}
+  .ams-drawer-head{padding:10px 14px 0}
+  .ams-drawer-body{padding:14px 14px 28px}
+  .ams-sticker-main{padding:12px 14px}
+  .ams-sticker-no{font-size:21px}
+  .ams-sticker-qr{width:96px;padding:10px 8px}
+  .ams-log-row{grid-template-columns:86px minmax(0,1fr);gap:10px;padding:11px 12px}
+}
 
 /* Toasts: bottom right, a light plate with a sand edge, or red for errors. */
-.ams-toasts{position:fixed;right:20px;bottom:20px;z-index:45;display:flex;width:min(400px,calc(100vw - 28px));flex-direction:column;gap:10px}
+.ams-toasts{position:fixed;right:20px;bottom:20px;z-index:50;display:flex;width:min(400px,calc(100vw - 28px));flex-direction:column;gap:10px}
 .ams-toast{display:flex;align-items:flex-start;gap:10px;padding:12px 10px 12px 14px;border-left:4px solid var(--ams-sand-deep);border-radius:10px;
   background:var(--ams-plate);color:var(--ams-on-plate);font-size:13px;font-weight:500;line-height:1.45;box-shadow:0 16px 44px rgba(0,0,0,.42);
   animation:ams-toast 280ms cubic-bezier(.2,.8,.25,1) both}
@@ -2459,7 +2735,7 @@ const CHROME_CSS = `
   .ams-stat-v{font-size:24px}
   .ams-metric-v{font-size:24px}
 }
-@media (prefers-reduced-motion:reduce){.ams-sidebar,.ams-main,.ams-pop,.ams-spin,.ams-cart-tick,.ams-ctl,.ams-btn,.ams-nav-item,.ams-nav-item:before,.ams-nav-icon svg,.ams-stat,.ams-stat-icon,.ams-trend-tip,.ams-brand,.ams-brand-glaze:before,.ams-signout,.ams-save-dot,.ams-scrim,.ams-scrim>*,.ams-slide-in,.ams-toast{animation:none;transition:none}}
+@media (prefers-reduced-motion:reduce){.ams-sidebar,.ams-main,.ams-pop,.ams-spin,.ams-cart-tick,.ams-ctl,.ams-btn,.ams-nav-item,.ams-nav-item:before,.ams-nav-icon svg,.ams-stat,.ams-stat-icon,.ams-trend-tip,.ams-brand,.ams-brand-glaze:before,.ams-signout,.ams-save-dot,.ams-scrim,.ams-scrim>*,.ams-slide-in,.ams-toast,.ams-drawer,.ams-drawer-scrim,.ams-tab:after,.ams-tab{animation:none;transition:none}}
 `;
 
 
@@ -2807,10 +3083,6 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
   const [viewer, setViewer] = useState(null);
   /* the asset's paperwork, opened at the one that was clicked */
   const [gallery, setGallery] = useState(null);
-  /* The detail panel scrolls inside itself, so opening a second asset would
-     otherwise begin wherever the first one was left - halfway down somebody
-     else's custody trail. Each selection starts at the top of its own panel. */
-  const detail = useRef(null);
   const [assetImport, setAssetImport] = useState(false);
   const [notice, setNotice] = useState("");
   const [legacyBrowserData, setLegacyBrowserData] = useState(null);
@@ -2929,16 +3201,6 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
     }
   };
 
-  useEffect(() => { detail.current?.scrollTo({ top: 0 }); }, [sel]);
-  /* ...and slides in from the right, the way a drawer opens. It is played on
-     the panel already there rather than by remounting it, which would also
-     reset the tab and scroll position inside it. */
-  useEffect(() => {
-    const node = detail.current;
-    if (!sel || !node?.animate || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
-    node.animate([{ opacity: 0, transform: "translateX(26px)" }, { opacity: 1, transform: "none" }],
-      { duration: 300, easing: "cubic-bezier(.2,.8,.25,1)" });
-  }, [sel]);
 
   const openJob = useCallback(
     (assetId) => allowedRepairs.find((r) => r.assetId === assetId && !r.closed) || null,
@@ -3022,6 +3284,11 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
       }),
       unique: Object.fromEntries(UNIQUE_FIELDS.map(({ key }) => [
         key, Object.fromEntries(allowedAssets.filter((a) => normKey(a[key])).map((a) => [normKey(a[key]), a.tag])),
+      ])),
+      /* the same, keyed without case or spaces and naming the asset, for the
+         asset form's as-you-type check */
+      idOwners: Object.fromEntries(UNIQUE_FIELDS.map(({ key }) => [
+        key, Object.fromEntries(allowedAssets.filter((a) => idKey(a[key])).map((a) => [idKey(a[key]), { id: a.id, tag: a.tag, name: a.name }])),
       ])),
       nextTag: issuedTag || `AST-${formatSequenceNumber(Math.max(n.length ? Math.max(...n) + 1 : 1, numbering?.asset?.start || 1), numbering?.asset)}`,
       tagIsIssued: !!issuedTag,
@@ -3230,7 +3497,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
   const categoryIdFor = (name) => categories.find((item) => normKey(item.name) === normKey(name))?.id || null;
   const projectIdFor = (code) => projects.find((item) => normKey(item.pid) === normKey(code))?.id || null;
 
-  const runAsset = async (name, vals) => {
+  const runAsset = async (name, vals, meta = {}) => {
     const permission = name === "register" ? "asset.create" : ["transfer", "transferCart"].includes(name) ? "asset.transfer" : ["retire", "reinstate"].includes(name) ? "asset.retire" : "asset.update";
     if (!requirePermission(permission, ASSET_ACTIONS[name].title.toLowerCase())) return;
     try {
@@ -3268,7 +3535,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
           for (const shot of shots) if (shot.path) await deleteAssetPhoto(shot.path).catch(() => {});
           throw error;
         }
-        setNotice(result?.asset_number ? `Asset ${result.asset_number} registered.` : "Asset registered in Supabase.");
+        setNotice(result?.asset_number ? `${result.asset_number} registered` : "Asset registered");
       }
       else if (name === "edit") {
         const shots = await uploadImages(scoped.photos);
@@ -3282,7 +3549,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
             ...await settleFiles(current.id, scoped.files, current.files || []),
           ];
           return saved;
-        }, "Asset updated.");
+        }, meta.changed?.length ? `${scoped.tag || current.tag} saved: ${meta.changed.join(", ")} changed` : "Asset updated.");
       }
       else if (name === "transfer") await runServerMutation(() => transferAsset(current, scoped), "Transfer recorded.");
       else if (name === "transferCart") {
@@ -3663,8 +3930,6 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
 
   if (loading) return <div className="min-h-screen flex items-center justify-center" style={{ background: C.paper, fontFamily: MONO, fontSize: 12, letterSpacing: "0.15em", color: C.mute }}>LOADING FROM SUPABASE…</div>;
 
-  const av = current ? availOf(current, openJob(current.id)) : null;
-  const curJobOfAsset = current ? openJob(current.id) : null;
   const partOf = (d) => {
     const j = repairs.find((r) => r.id === d.jobId);
     return (j?.parts || []).find((p) => p.id === d.partId) || {};
@@ -3763,7 +4028,40 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
     : refreshing ? { state: "busy", text: "Refreshing…" }
       : saveErr ? { state: "error", text: "Not saved" }
         : { state: "ok", text: "Saved" };
-  const selectTab = (key) => { setTab(key); setJob(null); };
+  /* a record drawer belongs to the Assets page, so leaving the page closes it */
+  const selectTab = (key) => { setTab(key); setJob(null); setSel(null); };
+  /* what the buttons in the asset record ask for */
+  const assetAction = (name, arg) => {
+    if (!current) return;
+    if (name === "transfer") setDlg({ kind: "asset", name: "transfer" });
+    else if (name === "cart") askAddToCart(current);
+    else if (name === "fault") setDlg({ kind: "repair", name: "open", assetId: current.id });
+    else if (name === "retire") setDlg({ kind: "asset", name: "retire" });
+    else if (name === "edit") setDlg({ kind: "asset", name: "edit" });
+    else if (name === "reinstate") setDlg({ kind: "asset", name: "reinstate" });
+    else if (name === "ticket") { setTab("repairs"); setJob(arg); }
+    else if (name === "schedule") setMaintenanceChoice({ lockedAssetTag: `${current.tag} — ${current.name}` });
+    else if (name === "logPlan") setDlg({ kind: "plan", name: "logPlan", planId: arg });
+    else if (name === "forms") setFormsFor(current);
+    else if (name === "images") {
+      const shots = current.images?.length ? current.images : [{ id: "cover", url: current.photoUrl }];
+      setGallery({ items: imageItems(shots, current), at: arg });
+    }
+    else if (name === "documents") setGallery({ items: documentItems(current.files), at: arg, resolve: getAssetAttachmentUrls });
+    else if (name === "delete") setConfirm({
+      title: `Delete ${current.tag}?`,
+      body: "This erases the record, its custody trail, repair tickets, and schedules for good. To keep the history instead, retire the asset.",
+      confirm: "Delete permanently",
+      run: async () => {
+        if (!requirePermission(DELETE_PERMISSION, "deleting an asset")) return;
+        try {
+          const receipts = repairs.filter((repair) => repair.assetId === sel).flatMap((repair) => repair.parts || []).map((part) => part.receipt).filter(Boolean);
+          await runServerMutation(async () => { for (const receipt of receipts) await removeStoredReceipt(receipt); await deleteAsset(sel); }, "Asset permanently deleted.");
+          setSel(null);
+        } catch { /* the server state has been reloaded */ }
+      },
+    });
+  };
   /* The register form belongs to the register: offering it from Settings or
      User Management only invited the question of what it would do there. Every
      other tab already carries its own add control - Add part, Add schedule,
@@ -3789,28 +4087,6 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
 
         {loadErr && <div className="px-5 py-2 text-center" style={{ background: STAGES.broken.tint, color: STAGES.broken.color, fontSize: 13 }}>{loadErr} <button className="underline ml-2" onClick={() => reloadOperationalData().catch(() => {})}>Retry</button></div>}
         {legacyBrowserData?.error && <div className="px-5 py-2 text-center" style={{ background: TINT.warn, color: C.due, fontSize: 13 }}>Legacy {legacyBrowserData.source} data was found but could not be parsed: {legacyBrowserData.error}. Nothing was deleted.</div>}
-        {/* What the last action did, bottom right: a light plate for news, red
-            for a change that did not go through. Each stays until it is closed
-            or the next one replaces it. */}
-        {(notice || saveErr) && (
-          <div className="ams-toasts">
-            {saveErr && (
-              <div key={`e:${saveErr}`} className="ams-toast" data-tone="error" role="alert">
-                <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-                <span className="min-w-0 flex-1">{saveErr}</span>
-                <button type="button" className="ams-toast-x" onClick={() => setSaveErr("")} aria-label="Dismiss"><X size={14} /></button>
-              </div>
-            )}
-            {notice && (
-              <div key={`n:${notice}`} className="ams-toast" role="status">
-                <CheckCircle2 size={16} style={{ flexShrink: 0, marginTop: 1, color: C.ok }} />
-                <span className="min-w-0 flex-1">{notice}</span>
-                <button type="button" className="ams-toast-x" onClick={() => setNotice("")} aria-label="Dismiss"><X size={14} /></button>
-              </div>
-            )}
-          </div>
-        )}
-
         <div id="ams-panel" role="region" aria-labelledby={`ams-nav-${tab}`} className="ams-content">
         {tab === "assets" && (<>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
@@ -3900,248 +4176,97 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
             )}
           </div>
 
-          <div className="flex gap-5 items-start">
-            <div className={`${current ? "hidden md:block" : "block"} w-full md:w-auto shrink-0`}>
-              <div className="ams-table-frame overflow-hidden md:w-80 lg:w-96" style={{ background: C.surface }}>
-                {shown.length === 0 ? (
-                  <div className="px-5 py-12 text-center">
-                    <div style={{ fontSize: 14, marginBottom: 4 }}>{allowedAssets.length === 0 ? "No assets are available in your assigned scope." : "No assets match these filters."}</div>
-                    <div style={{ fontSize: 13, color: C.mute }}>{allowedAssets.length === 0 ? "Ask a Super Admin to review your company and asset-group assignments." : "Widen a dropdown or clear the filters to see more."}</div>
-                  </div>
-                ) : shown.map((a) => {
-                  const s = availOf(a, openJob(a.id));
-                  const dueHere = plansOf(a.id).filter((p) => daysUntil(p.nextDue) <= 30).sort((x, y) => dueOf(x).rank - dueOf(y).rank)[0];
-                  return (
-                    /* the row is a wrapper rather than one button, because the
-                       cart toggle beside it cannot be nested inside one */
-                    <div key={a.id} className="ams-list-row flex items-stretch"
-                      style={{ borderBottom: `1px solid ${C.ruleSoft}`, background: sel === a.id ? C.soft : "transparent", borderLeft: `3px solid ${sel === a.id ? s.color : "transparent"}` }}>
-                      <button type="button" onClick={() => setSel(a.id)} className="min-w-0 flex-1 text-left px-4 py-3 flex gap-3 items-center">
-                      {/* The picture carries the left of the row, because a
-                          yard is remembered by machines rather than by asset
-                          numbers. Rows without one keep the same frame, so
-                          everything to the right still lines up down the list,
-                          and where there is more than one photograph the count
-                          says so rather than hiding the rest. */}
-                      <span className="relative shrink-0" style={{ width: 52, height: 52 }}>
-                        {a.photoUrl ? (
-                          <img src={a.photoUrl} alt={`Asset image — ${a.tag}`} title={`Asset image — ${a.tag}`}
-                            style={{ width: "100%", height: "100%", display: "block", objectFit: "cover",
-                              borderRadius: 7, border: `1px solid ${C.ruleSoft}`, background: C.soft }} />
-                        ) : (
-                          <span aria-hidden="true" title={`No asset image — ${a.tag}`}
-                            style={{ width: "100%", height: "100%", display: "grid", placeItems: "center",
-                              borderRadius: 7, border: `1px solid ${C.ruleSoft}`, background: C.soft }}>
-                            <ImgIcon src="/icon/No%20Image.png" size={19} style={{ color: C.dim }} />
-                          </span>
-                        )}
-                        {a.images?.length > 1 && (
-                          <span aria-hidden="true" title={`${a.images.length} images`}
-                            style={{ position: "absolute", right: -5, bottom: -5, minWidth: 18, height: 18,
-                              padding: "0 4px", display: "grid", placeItems: "center", borderRadius: 999,
-                              background: C.surface, border: `1px solid ${C.rule}`,
-                              fontFamily: MONO, fontSize: 9.5, fontWeight: 700, color: C.mute }}>
-                            {a.images.length}
-                          </span>
-                        )}
-                      </span>
-                      {/* a rule, not a gap: it separates the machine from what
-                          the register knows about it without cutting the row */}
-                      <span aria-hidden="true" style={{ width: 1, alignSelf: "stretch", flexShrink: 0, background: C.ruleSoft }} />
-                      <div className="min-w-0 flex-1">
-                        {/* the number identifies it, the pill says whether it
-                            is anywhere it can be used from - one line, because
-                            they are read together */}
-                        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-                          <RecordTag>{a.tag}</RecordTag>
-                          {/* tint alone, no border: the colours here are CSS
-                              variables, and "var(--x)22" is not a colour - the
-                              declaration is simply dropped */}
-                          <span className="uppercase shrink-0" style={{ fontFamily: SANS, fontSize: 9, fontWeight: 800, letterSpacing: "0.06em",
-                            color: s.color, background: s.tint, borderRadius: 20, padding: "2px 7px" }}>{s.label}</span>
-                        </div>
-                        <div className="truncate" style={{ fontSize: 14, fontWeight: 600, marginTop: 3, lineHeight: 1.25 }}>{a.name}</div>
-                        <div className="flex items-center gap-1.5 mt-1" style={{ fontSize: 12, color: C.mute, minWidth: 0 }}>
-                          <MapPin size={11} style={{ flexShrink: 0, color: C.dim }} />
-                          <span className="truncate">{a.location}</span>
-                          <span aria-hidden="true" style={{ flexShrink: 0, color: C.rule }}>·</span>
-                          <span className="truncate">{a.custodian}</span>
-                          {dueHere && <CalendarClock size={12} style={{ marginLeft: "auto", flexShrink: 0, color: dueOf(dueHere).color }} />}
-                        </div>
-                      </div>
-                      </button>
-                      {can("asset.transfer") && (cartable(a) ? (
-                        <button type="button" onClick={() => askAddToCart(a)} aria-pressed={inCart(a.id)}
-                          title={inCart(a.id) ? `Remove ${a.tag} from the transfer cart` : `Add ${a.tag} to the transfer cart`}
-                          aria-label={inCart(a.id) ? `Remove ${a.tag} from the transfer cart` : `Add ${a.tag} to the transfer cart`}
-                          className="flex items-center justify-center hover:opacity-70"
-                          style={{ width: 40, color: C.dim, background: inCart(a.id) ? TINT.ok : "transparent", borderLeft: `1px solid ${C.ruleSoft}` }}>
-                          {/* once it is in the cart the control stops being an
-                              invitation and becomes a receipt: the trolley is
-                              replaced by a green tick, which lands with the tap
-                              that put the asset there and then sits still */}
-                          {inCart(a.id)
-                            ? <CheckCircle2 size={16} strokeWidth={2.4} className="ams-cart-tick" />
-                            : <ImgIcon src="/icon/add-to-cart.png" size={17} />}
-                        </button>
-                      ) : (
-                        /* the column stays, so the rows above and below it do
-                           not shift; only the control is gone */
-                        <span aria-hidden="true" className="px-3" style={{ width: 40, borderLeft: `1px solid ${C.ruleSoft}` }} />
-                      ))}
-                    </div>
-                  );
-                })}
+          {/* every asset, full width; a row opens its record in the drawer */}
+          <div className="ams-table-frame overflow-hidden" style={{ background: C.surface }}>
+            {shown.length === 0 ? (
+              <div className="px-5 py-12 text-center">
+                <div style={{ fontSize: 14, marginBottom: 4 }}>{allowedAssets.length === 0 ? "No assets are available in your assigned scope." : "No assets match these filters."}</div>
+                <div style={{ fontSize: 13, color: C.mute }}>{allowedAssets.length === 0 ? "Ask a Super Admin to review your company and asset-group assignments." : "Widen a dropdown or clear the filters to see more."}</div>
               </div>
-            </div>
-
-            <div ref={detail} className={`ams-detail ${current ? "block" : "hidden md:block"} flex-1 min-w-0`}>
-              {!current ? (
-                <div className="flex items-center justify-center px-6 text-center" style={{ height: 320, border: `1px dashed ${C.rule}`, borderRadius: 2, color: C.mute, fontSize: 14 }}>
-                  Select an asset to see its availability, schedules, and custody trail.
-                </div>
-              ) : (
-                <div className="ams-table-frame overflow-hidden" style={{ background: C.surface }}>
-                  <div className="px-5 pt-5 pb-4">
-                    <button onClick={() => setSel(null)} className="md:hidden flex items-center gap-1 mb-3" style={{ fontSize: 13, color: C.mute }}><ChevronLeft size={15} />All assets</button>
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <RecordTag big>{current.tag}</RecordTag>
-                        <div style={{ fontSize: 17, fontWeight: 600, marginTop: 8, color: C.head }}>{current.name}</div>
-                        {/* The code as a code, and only as a code. It used to
-                            be printed as a chip here as well, directly above
-                            the QR that already carries it and captions it, so
-                            the panel showed the same number twice and read as
-                            two different things. The plain value still has a
-                            place: the Asset code row in the details below. */}
-                        {assetScanKey(current) && (
-                          <div className="flex items-start gap-3 mt-3">
-                            <img src={qrDataUri(assetDeepLink(current), 104)} width={104} height={104}
-                              alt={`QR code for ${current.code || current.tag}`}
-                              style={{ display: "block", flexShrink: 0, border: `1px solid ${C.ruleSoft}`, borderRadius: 2, background: "#fff" }} />
-                            <div style={{ maxWidth: 190 }}>
-                              <Label>Asset QR code</Label>
-                              <div style={{ fontSize: 12.5, color: C.mute, lineHeight: 1.45 }}>
-                                Holds <span style={{ fontFamily: MONO }}>{current.code || current.tag}</span>. Scanning it opens this asset here, after signing in.
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      <div className="text-right"><Label>Availability</Label><Chip color={av.color} tint={av.tint} big>{av.label}</Chip></div>
-                    </div>
-
-                    {curJobOfAsset && (
-                      <button onClick={() => { setTab("repairs"); setJob(curJobOfAsset.id); }} className="mt-4 w-full text-left px-3 py-3 flex items-center gap-3"
-                        style={{ background: STAGES[curJobOfAsset.stage].tint, borderLeft: `3px solid ${STAGES[curJobOfAsset.stage].color}` }}>
-                        <Wrench size={15} style={{ color: STAGES[curJobOfAsset.stage].color, flexShrink: 0 }} />
-                        <div className="min-w-0 flex-1">
-                          <div style={{ fontSize: 13.5, fontWeight: 600 }}>{curJobOfAsset.fault}</div>
-                          <div style={{ fontSize: 12.5, color: C.mute }}>{curJobOfAsset.ticket} · {STAGES[curJobOfAsset.stage].label} · day {daysSince(curJobOfAsset.date)} · {money(repairTotal(curJobOfAsset))}</div>
-                        </div>
-                        <ChevronRight size={16} style={{ color: C.mute }} />
-                      </button>
-                    )}
-                  </div>
-
-                  {/* what the numbers cannot tell you: which machine this is on sight.
-                      Keyed on the asset so paging through one asset's pictures does
-                      not carry a position over to the next one opened. */}
-                  {(current.images?.length > 0 || current.photoUrl) && (
-                    <AssetImages key={current.id}
-                      images={current.images?.length ? current.images : [{ id: "cover", url: current.photoUrl }]}
-                      alt={`Asset image — ${current.tag} ${current.name}`}
-                      onOpen={(index) => setGallery({
-                        items: imageItems(current.images?.length ? current.images : [{ id: "cover", url: current.photoUrl }], current),
-                        at: index,
-                      })} />
-                  )}
-
-                  {/* the invoice, the registration, the deed - the papers that
-                      say this machine is the company's, kept with the machine */}
-                  {current.files?.length > 0 && (
-                    <AssetDocuments files={current.files}
-                      onOpen={(index) => setGallery({ items: documentItems(current.files), at: index, resolve: getAssetAttachmentUrls })} />
-                  )}
-
-                  <div style={{ borderTop: `1px solid ${C.ruleSoft}`, borderBottom: `1px solid ${C.ruleSoft}` }}>
-                    <FactGroup title="Identification" facts={[["Category", current.category],
-                      ["Brand/Manufacturer", current.brand], ["Model", current.model],
-                      [serialLabel(current.category), current.serial, true],
-                      ...vehicleKeys(current.category).map((k) => [VEHICLE_FIELD_DEFS[k].label, current[k], true]),
-                      ["Body number", current.body, true], ["Asset code", current.code, true]]} />
-                    <FactGroup title="Assignment" facts={[["Company", current.company], ["Project/Location", current.project || NO_PROJECT],
-                      ["Address", current.location], ["Responsible person", current.custodian]]} />
-                    <FactGroup title="Value and upkeep" facts={[["Acquired", fmt(current.acquired)], ["Acquisition cost", money(current.cost)]]}
-                      note={current.notes} />
-                  </div>
-
-                  {/* schedules on the asset */}
-                  <div className="px-5 py-4" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
-                    <div className="flex items-center justify-between mb-2">
-                      <Label>Maintenance schedules</Label>
-                      {can("maintenance.manage") && <Btn small icon={Plus} onClick={() => setMaintenanceChoice({ lockedAssetTag: current ? `${current.tag} — ${current.name}` : "" })}>Add Maintenance</Btn>}
-                    </div>
-                    {plansOf(current.id).length === 0 ? (
-                      <div className="px-3 py-5 text-center" style={{ border: `1px dashed ${C.rule}`, fontSize: 13, color: C.mute }}>
-                        No recurring maintenance set. Add one for servicing, registration, or calibration.
-                      </div>
+            ) : shown.map((a) => {
+              const s = availOf(a, openJob(a.id));
+              const dueHere = plansOf(a.id).filter((p) => daysUntil(p.nextDue) <= 30).sort((x, y) => dueOf(x).rank - dueOf(y).rank)[0];
+              return (
+                /* the row is a wrapper rather than one button, because the
+                   cart toggle beside it cannot be nested inside one */
+                <div key={a.id} className="ams-list-row flex items-stretch"
+                  style={{ borderBottom: `1px solid ${C.ruleSoft}`, background: sel === a.id ? C.soft : "transparent", borderLeft: `3px solid ${sel === a.id ? s.color : "transparent"}` }}>
+                  <button type="button" onClick={() => setSel(a.id)} className="min-w-0 flex-1 text-left px-4 py-3 flex gap-3 items-center">
+                  {/* The picture carries the left of the row, because a
+                      yard is remembered by machines rather than by asset
+                      numbers. Rows without one keep the same frame, so
+                      everything to the right still lines up down the list,
+                      and where there is more than one photograph the count
+                      says so rather than hiding the rest. */}
+                  <span className="relative shrink-0" style={{ width: 52, height: 52 }}>
+                    {a.photoUrl ? (
+                      <img src={a.photoUrl} alt={`Asset image — ${a.tag}`} title={`Asset image — ${a.tag}`}
+                        style={{ width: "100%", height: "100%", display: "block", objectFit: "cover",
+                          borderRadius: 7, border: `1px solid ${C.ruleSoft}`, background: C.soft }} />
                     ) : (
-                      <div style={{ border: `1px solid ${C.ruleSoft}` }}>
-                        {plansOf(current.id).map((p) => { const d = dueOf(p);
-                          return (
-                            <div key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
-                              <Repeat size={13} style={{ color: C.mute }} />
-                              <div className="flex-1" style={{ minWidth: 150 }}>
-                                <div style={{ fontSize: 13.5 }}>{p.name}</div>
-                                <div style={{ fontSize: 12, color: C.mute }}>{everyLabel(p)} · next {fmt(p.nextDue)}{p.lastDone ? ` · last ${fmt(p.lastDone)}` : ""}</div>
-                              </div>
-                              <Chip color={d.color} tint={d.tint}>{d.label}</Chip>
-                              {can("maintenance.manage") && <Btn small icon={CalendarCheck} onClick={() => setDlg({ kind: "plan", name: "logPlan", planId: p.id })}>Log done</Btn>}
-                            </div>
-                          );
-                        })}
-                      </div>
+                      <span aria-hidden="true" title={`No asset image — ${a.tag}`}
+                        style={{ width: "100%", height: "100%", display: "grid", placeItems: "center",
+                          borderRadius: 7, border: `1px solid ${C.ruleSoft}`, background: C.soft }}>
+                        <ImgIcon src="/icon/No%20Image.png" size={19} style={{ color: C.dim }} />
+                      </span>
                     )}
+                    {a.images?.length > 1 && (
+                      <span aria-hidden="true" title={`${a.images.length} images`}
+                        style={{ position: "absolute", right: -5, bottom: -5, minWidth: 18, height: 18,
+                          padding: "0 4px", display: "grid", placeItems: "center", borderRadius: 999,
+                          background: C.surface, border: `1px solid ${C.rule}`,
+                          fontFamily: MONO, fontSize: 9.5, fontWeight: 700, color: C.mute }}>
+                        {a.images.length}
+                      </span>
+                    )}
+                  </span>
+                  {/* a rule, not a gap: it separates the machine from what
+                      the register knows about it without cutting the row */}
+                  <span aria-hidden="true" style={{ width: 1, alignSelf: "stretch", flexShrink: 0, background: C.ruleSoft }} />
+                  <div className="min-w-0 flex-1">
+                    {/* the number identifies it, the pill says whether it
+                        is anywhere it can be used from - one line, because
+                        they are read together */}
+                    <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                      <RecordTag>{a.tag}</RecordTag>
+                      {/* tint alone, no border: the colours here are CSS
+                          variables, and "var(--x)22" is not a colour - the
+                          declaration is simply dropped */}
+                      <span className="uppercase shrink-0" style={{ fontFamily: SANS, fontSize: 9, fontWeight: 800, letterSpacing: "0.06em",
+                        color: s.color, background: s.tint, borderRadius: 20, padding: "2px 7px" }}>{s.label}</span>
+                    </div>
+                    <div className="truncate" style={{ fontSize: 14, fontWeight: 600, marginTop: 3, lineHeight: 1.25 }}>{a.name}</div>
+                    <div className="flex items-center gap-1.5 mt-1" style={{ fontSize: 12, color: C.mute, minWidth: 0 }}>
+                      <MapPin size={11} style={{ flexShrink: 0, color: C.dim }} />
+                      <span className="truncate">{a.location}</span>
+                      <span aria-hidden="true" style={{ flexShrink: 0, color: C.rule }}>·</span>
+                      <span className="truncate">{a.custodian}</span>
+                      {dueHere && <CalendarClock size={12} style={{ marginLeft: "auto", flexShrink: 0, color: dueOf(dueHere).color }} />}
+                    </div>
                   </div>
-
-                  <div className="flex flex-wrap gap-2 px-5 py-4">
-                    {current.status === "active" && <>
-                      {can("asset.transfer") && <Btn icon={ArrowLeftRight} onClick={() => setDlg({ kind: "asset", name: "transfer" })}>Transfer</Btn>}
-                      {can("asset.transfer") && cartable(current) && (
-                        <Btn icon={inCart(current.id) ? CheckCircle2 : undefined} img={inCart(current.id) ? undefined : "/icon/add-to-cart.png"}
-                          iconClass={inCart(current.id) ? "ams-cart-tick" : undefined} onClick={() => askAddToCart(current)}>
-                          {inCart(current.id) ? "Remove from cart" : "Add to cart"}
-                        </Btn>
-                      )}
-                      {can("repair.create") && <Btn icon={AlertTriangle} onClick={() => setDlg({ kind: "repair", name: "open", assetId: current.id })}>Report fault</Btn>}
-                      {can("asset.retire") && <Btn icon={Archive} onClick={() => setDlg({ kind: "asset", name: "retire" })}>Retire</Btn>}
-                    </>}
-                    {current.status === "repair" && <Btn kind="solid" icon={Wrench} onClick={() => { setTab("repairs"); setJob(curJobOfAsset?.id); }}>Open repair ticket</Btn>}
-                    {current.status === "retired" && can("asset.retire") && <Btn icon={RotateCcw} onClick={() => setDlg({ kind: "asset", name: "reinstate" })}>Bring back into service</Btn>}
-                    {can("asset.update") && <Btn icon={Pencil} onClick={() => setDlg({ kind: "asset", name: "edit" })}>Edit</Btn>}
-                    {/* every sheet this asset has produced: view, print or save */}
-                    <Btn icon={FileText} onClick={() => setFormsFor(current)}>Transfer form</Btn>
-                    {can(DELETE_PERMISSION) && <Btn kind="danger" icon={Trash2} onClick={() => setConfirm({
-                      title: `Delete ${current.tag}?`,
-                      body: "This erases the record, its custody trail, repair tickets, and schedules for good. To keep the history instead, retire the asset.",
-                      confirm: "Delete permanently",
-                      run: async () => {
-                        if (!requirePermission(DELETE_PERMISSION, "deleting an asset")) return;
-                        try {
-                          const receipts = repairs.filter((repair) => repair.assetId === sel).flatMap((repair) => repair.parts || []).map((part) => part.receipt).filter(Boolean);
-                          await runServerMutation(async () => { for (const receipt of receipts) await removeStoredReceipt(receipt); await deleteAsset(sel); }, "Asset permanently deleted.");
-                          setSel(null);
-                        } catch { /* the server state has been reloaded */ }
-                      },
-                    })}>Delete</Btn>}
-                  </div>
-
-                  <HistoryPanel asset={current} csv={csv} repairs={allowedRepairs.filter((r) => r.assetId === current.id)}
-                    onOpenTicket={(id) => { setTab("repairs"); setJob(id); }} />
+                  </button>
+                  {can("asset.transfer") && (cartable(a) ? (
+                    <button type="button" onClick={() => askAddToCart(a)} aria-pressed={inCart(a.id)}
+                      title={inCart(a.id) ? `Remove ${a.tag} from the transfer cart` : `Add ${a.tag} to the transfer cart`}
+                      aria-label={inCart(a.id) ? `Remove ${a.tag} from the transfer cart` : `Add ${a.tag} to the transfer cart`}
+                      className="flex items-center justify-center hover:opacity-70"
+                      style={{ width: 40, color: C.dim, background: inCart(a.id) ? TINT.ok : "transparent", borderLeft: `1px solid ${C.ruleSoft}` }}>
+                      {/* once it is in the cart the control stops being an
+                          invitation and becomes a receipt: the trolley is
+                          replaced by a green tick, which lands with the tap
+                          that put the asset there and then sits still */}
+                      {inCart(a.id)
+                        ? <CheckCircle2 size={16} strokeWidth={2.4} className="ams-cart-tick" />
+                        : <ImgIcon src="/icon/add-to-cart.png" size={17} />}
+                    </button>
+                  ) : (
+                    /* the column stays, so the rows above and below it do
+                       not shift; only the control is gone */
+                    <span aria-hidden="true" className="px-3" style={{ width: 40, borderLeft: `1px solid ${C.ruleSoft}` }} />
+                  ))}
                 </div>
-              )}
-            </div>
+              );
+            })}
           </div>
         </>)}
 
@@ -4292,7 +4417,40 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
         </div>
       </main>
 
-      {dlg && <div className="ams-overlay"><Dialog def={dlgDef} subject={dlgSubject} header={dlgHeader} ctx={ctx} busy={saving} onCancel={() => setDlg(null)}
+      {tab === "assets" && current && (
+        <AssetDrawer key={current.id} asset={current} job={openJob(current.id)}
+          repairs={allowedRepairs.filter((r) => r.assetId === current.id)} plans={plansOf(current.id)}
+          can={can} csv={csv} inCart={inCart(current.id)} cartable={cartable(current)}
+          onClose={() => setSel(null)} onAction={assetAction} />
+      )}
+
+      {/* What the last action did, bottom right: a light plate for news, red
+          for a change that did not go through. Each stays until it is closed
+          or the next one replaces it. */}
+      {(notice || saveErr) && (
+        <div className="ams-toasts">
+          {saveErr && (
+            <div key={`e:${saveErr}`} className="ams-toast" data-tone="error" role="alert">
+              <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span className="min-w-0 flex-1">{saveErr}</span>
+              <button type="button" className="ams-toast-x" onClick={() => setSaveErr("")} aria-label="Dismiss"><X size={14} /></button>
+            </div>
+          )}
+          {notice && (
+            <div key={`n:${notice}`} className="ams-toast" role="status">
+              <CheckCircle2 size={16} style={{ flexShrink: 0, marginTop: 1, color: C.ok }} />
+              <span className="min-w-0 flex-1">{notice}</span>
+              <button type="button" className="ams-toast-x" onClick={() => setNotice("")} aria-label="Dismiss"><X size={14} /></button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {dlg && dlg.kind === "asset" && ["register", "edit"].includes(dlg.name) && (
+        <div className="ams-overlay"><AssetForm mode={dlg.name} asset={dlg.name === "edit" ? current : null} ctx={ctx} busy={saving}
+          serverError={saveErr} onCancel={() => setDlg(null)} onSubmit={(vals, meta) => runAsset(dlg.name, vals, meta)} /></div>
+      )}
+      {dlg && !(dlg.kind === "asset" && ["register", "edit"].includes(dlg.name)) && <div className="ams-overlay"><Dialog def={dlgDef} subject={dlgSubject} header={dlgHeader} ctx={ctx} busy={saving} onCancel={() => setDlg(null)}
         onSubmit={(vals) => dlg.kind === "asset" ? runAsset(dlg.name, vals) : dlg.kind === "repair" ? runRepair(dlg.name, vals) : dlg.kind === "part" ? runPart(dlg.name, vals) : dlg.kind === "person" ? runPerson(dlg.name, vals) : dlg.kind === "brand" ? runBrand(dlg.name, vals) : dlg.kind === "company" ? runCompany(dlg.name, vals) : dlg.kind === "category" ? runCategory(dlg.name, vals) : dlg.kind === "project" ? runProject(dlg.name, vals) : runPlan(dlg.name, vals)} /></div>}
 
       {assetImport && (
@@ -5929,151 +6087,326 @@ function PartsTab({ repairs, assets, onAct, onView, onDrop, onAdd, can }) {
 
 /* --------------------------- history panel --------------------------- */
 
-function HistoryPanel({ asset, repairs, csv, onOpenTicket }) {
-  const [view, setView] = useState("trail");
-  const chain = movements(asset);
-  const shown = [...chain].reverse();
-  const held = chain.find((m) => m.current);
-  const general = (asset.history || []).filter((h) => !isRepairEntry(h) && !isMoveEntry(h));
-  const tickets = [...repairs].sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  const outDays = tickets.reduce((s, t) => s + (t.closed && t.closedOn
-    ? Math.max(0, Math.round((new Date(t.closedOn + "T00:00:00") - new Date(t.date + "T00:00:00")) / 864e5))
-    : daysSince(t.date)), 0);
+/* =========================================================================
+   The asset record, as a drawer: 900px from the right over a dimmed page,
+   full width on a phone. The header stays put - the sticker, what can be
+   done with the asset now, and the tabs - and the body under it scrolls.
+
+   It closes on the dimmed page, the × or Escape. Anything opened from it (a
+   transfer, an edit, a schedule) is a dialog on top, so Escape closes that
+   first and the drawer is still there underneath.
+   ========================================================================= */
+const peso = (v) => `₱${num(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/* A two-column list of facts under a small heading, with 1px lines between
+   them. A half-width fact left alone at the end of a row - before a
+   full-width one, or at the very end - takes the whole row, so the grid never
+   ends in an empty cell. */
+function DetailList({ title, items }) {
+  const shown = items.filter(Boolean);
+  /* walked once, carrying which column the next fact lands in */
+  const cells = shown.reduce((out, item, index) => {
+    const next = shown[index + 1];
+    const span = !!item.full || (out.column === 0 && (!next || !!next.full));
+    return { column: span ? 0 : (out.column + 1) % 2, list: [...out.list, { ...item, span }] };
+  }, { column: 0, list: [] }).list;
+  return (
+    <section className="ams-dl-group">
+      <div className="ams-dl-head">{title}</div>
+      <div className="ams-dl">
+        {cells.map((item) => {
+          const empty = item.value === undefined || item.value === null || String(item.value).trim() === "";
+          return (
+            <div key={item.label} className="ams-dl-cell" data-span={item.span ? "1" : undefined}>
+              <div className="ams-dl-label">{item.label}</div>
+              {empty
+                ? <div className="ams-dl-empty">Not recorded</div>
+                : <div className="ams-dl-value" style={item.mono ? { fontFamily: MONO } : undefined}>{item.value}</div>}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/* a value that changed shows the new one, with where it came from under it */
+const Changed = ({ to, from, mono }) => (
+  <>
+    <div style={mono ? { fontFamily: MONO, fontSize: 12.5 } : undefined}>{to || "—"}</div>
+    {from && from !== to && <div className="ams-from">from {from}</div>}
+  </>
+);
+
+const EmptyTab = ({ children }) => <div className="ams-tab-empty">{children}</div>;
+
+function AssetDrawer({ asset: a, job, repairs, plans, can, csv, inCart, cartable, onClose, onAction }) {
+  const panel = useRef(null);
+  const titleId = useId();
+  const [tab, setTab] = useState("details");
+  useEscapeKey(true, onClose);
+  useDialogFocus(panel);
+  /* the page behind does not scroll while the drawer is over it */
+  useEffect(() => {
+    const before = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = before; };
+  }, []);
+
+  const av = availOf(a, job);
+  const retired = a.status === "retired";
+  const chain = movements(a);
+  const general = [...(a.history || [])].filter((h) => !isRepairEntry(h) && !isMoveEntry(h)).reverse();
+  const tickets = [...repairs].sort((x, y) => String(y.date).localeCompare(String(x.date)));
+  const repairSpend = tickets.reduce((s, t) => s + repairTotal(t), 0);
+  const upkeepSpend = plans.reduce((s, p) => s + planSpend(p), 0);
+  const completions = plans.reduce((s, p) => s + (p.done || []).length, 0);
+  const value = num(a.cost);
+  const share = value > 0 && (tickets.length || completions)
+    ? `${(((repairSpend + upkeepSpend) / value) * 100).toFixed(1)}% of the acquisition cost` : "";
 
   const exportMoves = () => csv(
     ["date", "from_project_location", "to_project_location", "from_address", "to_address", "from_person", "to_person", "reason", "days_held"],
     chain.map((m) => [m.date, m.move?.fromProject || "", m.move?.project || "", m.move?.fromLoc || "", m.move?.toLoc || "", m.move?.fromPer || "", m.move?.toPer || "", m.move?.why || m.text, m.days]),
-    `transfers-${asset.tag}-${today()}.csv`);
+    `transfers-${a.tag}-${today()}.csv`);
 
-  const Arrow = ({ from, to }) => {
-    if (!from) return <span style={{ fontSize: 13 }}>{to || "—"}</span>;
-    if (from === to) return <span style={{ fontSize: 13, color: C.mute }}>{to} <span style={{ fontSize: 11 }}>(unchanged)</span></span>;
-    return (
-      <span style={{ fontSize: 13 }}>
-        <span style={{ color: C.mute, textDecoration: "line-through" }}>{from}</span>
-        <span style={{ color: C.active, margin: "0 5px" }}>→</span>
-        <span style={{ fontWeight: 500 }}>{to}</span>
-      </span>
-    );
-  };
+  const projectText = (pid) => (!pid || pid === NO_PROJECT ? "X (not on a project site)" : pid);
+
+  const tabs = [
+    ["details", "Details", null],
+    ["history", "History", general.length],
+    ["transfers", "Transfers", chain.length],
+    ["repairs", "Repairs", tickets.length],
+    ["maintenance", "Maintenance", plans.length],
+  ];
 
   return (
-    <div className="px-5 py-4" style={{ borderTop: `1px solid ${C.ruleSoft}` }}>
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <div className="flex" style={{ border: `1px solid ${C.rule}`, borderRadius: 11, overflow: "hidden", background: C.soft }}>
-          {[["trail", "General trail", general.length], ["moves", "Transfers", chain.length], ["repairs", "Repairs", tickets.length]].map(([k, l, n]) => (
-            <button key={k} onClick={() => setView(k)} className="flex items-center gap-2 px-3 py-1.5"
-              style={{ background: view === k ? C.brand : "transparent", color: view === k ? C.brandInk : C.mute, fontSize: 13 }}>
-              {l}<span style={{ fontFamily: MONO, fontSize: 10.5, opacity: 0.7 }}>{n}</span>
-            </button>
-          ))}
-        </div>
-        {view === "moves" && chain.length > 0 && <Btn small icon={Download} onClick={exportMoves}>Export transfers</Btn>}
-      </div>
-
-      {view === "trail" && (
-        general.length === 0
-          ? <div className="px-3 py-6 text-center" style={{ border: `1px dashed ${C.rule}`, fontSize: 13, color: C.mute }}>Nothing here yet.</div>
-          : <><Trail entries={general} />
-              {tickets.length > 0 && (
-                <div style={{ fontSize: 12.5, color: C.mute, marginTop: -8 }}>
-                  Repair steps are kept separately — {tickets.length} ticket{tickets.length > 1 ? "s" : ""} under Repairs.
-                </div>
-              )}
-            </>
-      )}
-
-      {view === "repairs" && (
-        tickets.length === 0 ? (
-          <div className="px-3 py-6 text-center" style={{ border: `1px dashed ${C.rule}`, fontSize: 13, color: C.mute }}>
-            No repairs on record for this asset.
+    <>
+      <div className="ams-drawer-scrim" onClick={onClose} aria-hidden="true" />
+      <aside ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className="ams-drawer">
+        <header className="ams-drawer-head">
+          <div className="ams-drawer-top">
+            <span>Asset record</span>
+            <button type="button" className="ams-icon-btn" onClick={onClose} aria-label="Close asset record"><X size={18} /></button>
           </div>
-        ) : (<>
-          <div className="flex flex-wrap gap-x-8 gap-y-2 px-3 py-3 mb-3" style={{ background: C.soft, border: `1px solid ${C.ruleSoft}` }}>
-            {[["Tickets", tickets.length], ["Days out of service", outDays], ["Total repair cost", money(tickets.reduce((s, t) => s + repairTotal(t), 0))]].map(([l, v]) => (
-              <div key={l}><Label>{l}</Label><div style={{ fontFamily: MONO, fontSize: 15 }}>{v}</div></div>
+
+          <div className="ams-sticker">
+            <div className="ams-sticker-main">
+              <div className="ams-sticker-row">
+                <span id={titleId} className="ams-sticker-no">{a.tag}</span>
+                <span className="ams-sticker-status" style={{ "--c": av.color }}>{av.label}</span>
+              </div>
+              <div className="ams-sticker-name">{a.name}</div>
+              <div className="ams-sticker-meta">{[a.category, a.company].filter(Boolean).join(", ") || "No category or company recorded"}</div>
+            </div>
+            <div className="ams-sticker-qr">
+              {a.code ? (
+                <>
+                  <img src={qrDataUri(assetDeepLink(a), 120)} width={60} height={60} alt={`QR code for ${a.code}`} />
+                  <span style={{ fontFamily: MONO }}>{a.code}</span>
+                </>
+              ) : (
+                <>
+                  <QrCode size={30} strokeWidth={1.6} aria-hidden="true" />
+                  <span>No QR code yet</span>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="ams-drawer-actions">
+            {!retired && !job && <>
+              {can("asset.transfer") && <Btn small icon={ArrowLeftRight} onClick={() => onAction("transfer")}>Transfer</Btn>}
+              {can("asset.transfer") && cartable && (
+                <Btn small icon={inCart ? CheckCircle2 : undefined} img={inCart ? undefined : "/icon/add-to-cart.png"}
+                  iconClass={inCart ? "ams-cart-tick" : undefined} onClick={() => onAction("cart")}>
+                  {inCart ? "Remove from cart" : "Add to cart"}
+                </Btn>
+              )}
+              {can("repair.create") && <Btn small icon={AlertTriangle} onClick={() => onAction("fault")}>Report fault</Btn>}
+              {can("asset.retire") && <Btn small icon={Archive} onClick={() => onAction("retire")}>Retire</Btn>}
+              {can("asset.update") && <Btn small icon={Pencil} onClick={() => onAction("edit")}>Edit</Btn>}
+            </>}
+            {!retired && job && can("repair.view") && (
+              <Btn small kind="solid" icon={Wrench} onClick={() => onAction("ticket", job.id)}>Open repair ticket {job.ticket}</Btn>
+            )}
+            {retired && can("asset.retire") && <Btn small icon={RotateCcw} onClick={() => onAction("reinstate")}>Bring back into service</Btn>}
+            {!job && can(DELETE_PERMISSION) && (
+              <button type="button" className="ams-link-danger" onClick={() => onAction("delete")}><Trash2 size={14} />Delete record</button>
+            )}
+          </div>
+
+          <div className="ams-tabs" role="tablist" aria-label="Asset record">
+            {tabs.map(([key, label, n]) => (
+              <button key={key} type="button" role="tab" aria-selected={tab === key} className="ams-tab" onClick={() => setTab(key)}>
+                {label}{n !== null && <span className="ams-tab-n">{n}</span>}
+              </button>
             ))}
           </div>
-          <div style={{ border: `1px solid ${C.ruleSoft}` }}>
-            {tickets.map((t) => {
-              const st = t.closed ? { label: `Closed ${fmt(t.closedOn)}`, color: C.retired, tint: TINT.idle } : { label: STAGES[t.stage].label, color: STAGES[t.stage].color, tint: STAGES[t.stage].tint };
-              return (
-                <button key={t.id} onClick={() => onOpenTicket(t.id)} className="w-full text-left flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-3"
-                  style={{ borderBottom: `1px solid ${C.ruleSoft}`, borderLeft: `3px solid ${st.color}` }}>
-                  <div style={{ width: 78 }}>
-                    <RecordTag>{t.ticket}</RecordTag>
-                    <div style={{ fontFamily: MONO, fontSize: 11, color: C.mute }}>{fmt(t.date)}</div>
-                  </div>
-                  <div className="flex-1" style={{ minWidth: 160 }}>
-                    <div style={{ fontSize: 13.5 }}>{t.fault}</div>
-                    <div style={{ fontSize: 12.5, color: C.mute }}>
-                      {[t.provider, t.technician && `by ${t.technician}`, (t.parts || []).length ? `${t.parts.length} part${t.parts.length > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ") || "No provider recorded"}
-                    </div>
-                  </div>
-                  <Chip color={st.color} tint={st.tint}>{st.label}</Chip>
-                  <div style={{ fontFamily: MONO, fontSize: 13, width: 90, textAlign: "right" }}>{money(repairTotal(t))}</div>
-                  <ChevronRight size={15} style={{ color: C.mute }} />
-                </button>
-              );
-            })}
-          </div>
-        </>)
-      )}
+        </header>
 
-      {view === "moves" && (
-        chain.length === 0 ? (
-          <div className="px-3 py-6 text-center" style={{ border: `1px dashed ${C.rule}`, fontSize: 13, color: C.mute }}>
-            No movements recorded yet. Transfers, repair despatches, and releases all appear here.
-          </div>
-        ) : (<>
-          {held && (
-            <div className="px-3 py-3 mb-3" style={{ background: TINT.ok, borderLeft: `3px solid ${C.active}` }}>
-              <Label>Held since {fmt(held.date)}</Label>
-              <div style={{ fontSize: 14 }}>{asset.custodian} · {asset.location}</div>
-              <div style={{ fontSize: 12.5, color: C.mute, marginTop: 1 }}>
-                {held.days} day{held.days === 1 ? "" : "s"} in this placement · {chain.length - 1} movement{chain.length - 1 === 1 ? "" : "s"} before this
+        <div className="ams-drawer-body" role="tabpanel">
+          {tab === "details" && <>
+            {(a.images?.length > 0 || a.photoUrl) && (
+              <div className="ams-drawer-card">
+                <AssetImages key={a.id}
+                  images={a.images?.length ? a.images : [{ id: "cover", url: a.photoUrl }]}
+                  alt={`Asset image — ${a.tag} ${a.name}`}
+                  onOpen={(index) => onAction("images", index)} />
               </div>
+            )}
+            {a.files?.length > 0 && (
+              <div className="ams-drawer-card"><AssetDocuments files={a.files} onOpen={(index) => onAction("documents", index)} /></div>
+            )}
+            <DetailList title="Identification" items={[
+              { label: "Company", value: a.company },
+              { label: "Category", value: a.category },
+              { label: "Brand/Manufacturer", value: a.brand },
+              { label: "Model", value: a.model },
+              { label: "Asset code (QR sticker)", value: a.code, mono: true },
+              (hasBodyNumber(a.category) || a.body) && { label: "Body number", value: a.body, mono: true },
+              { label: serialLabel(a.category), value: a.serial, mono: true },
+              ...vehicleKeys(a.category).map((k) => ({ label: VEHICLE_FIELD_DEFS[k].label, value: a[k], mono: true })),
+            ]} />
+            <DetailList title="Assignment" items={[
+              { label: "Project/Location", value: projectText(a.project) },
+              { label: "Responsible person", value: a.custodian },
+              { label: "Address", value: a.location, full: true },
+            ]} />
+            <DetailList title="Value and upkeep" items={[
+              { label: "Date acquired", value: a.acquired ? fmt(a.acquired) : "" },
+              { label: "Acquisition cost", value: a.cost !== "" && a.cost !== null && a.cost !== undefined ? peso(a.cost) : "" },
+              { label: "Repairs to date", value: tickets.length ? `${peso(repairSpend)} across ${plural(tickets.length, "ticket")}` : "" },
+              { label: "Maintenance to date", value: completions ? `${peso(upkeepSpend)} across ${plural(completions, "completion")}` : "" },
+              { label: "Upkeep as share of value", value: share },
+              retired
+                ? { label: "Retired on", value: a.retiredOn ? [fmt(a.retiredOn), a.retirementReason].filter(Boolean).join(" · ") : "" }
+                : { label: "First placed", value: chain[0]?.date ? fmt(chain[0].date) : "" },
+              { label: "Notes", value: a.notes, full: true },
+            ]} />
+          </>}
+
+          {tab === "history" && (general.length === 0 ? <EmptyTab>No history recorded</EmptyTab> : (
+            <div className="ams-log">
+              {general.map((h, i) => (
+                <div key={`${h.ts}-${i}`} className="ams-log-row">
+                  <div className="ams-log-date">{fmt(h.date)}</div>
+                  <div className="min-w-0">
+                    <div className="ams-log-text"><Dot color={TRAIL[h.kind] || C.mute} size={7} />{h.text}</div>
+                    {h.sub && <div className="ams-log-sub">{h.sub}</div>}
+                    {h.recordedBy && <div className="ams-log-by">by {h.recordedBy}</div>}
+                  </div>
+                </div>
+              ))}
             </div>
-          )}
-          <div className="ams-table-frame overflow-x-auto">
-            <table className="ams-table" style={{ minWidth: 620 }}>
-              <thead>
-                <tr style={{ background: C.soft }}>
-                  {["Date", "Project/Location", "Address", "Responsible person", "Reason", "Held"].map((h, i) => (
-                    <th key={h} className="uppercase" style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.12em", color: C.mute, textAlign: i === 5 ? "right" : "left", padding: "8px 10px", borderBottom: `1px solid ${C.rule}`, whiteSpace: "nowrap" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {shown.map((m, i) => (
-                  <tr key={m.ts + "" + i} style={{ borderBottom: `1px solid ${C.ruleSoft}`, background: m.current ? C.soft : "transparent" }}>
-                    <td style={{ padding: "9px 10px", verticalAlign: "top", whiteSpace: "nowrap" }}>
-                      <div style={{ fontFamily: MONO, fontSize: 11.5 }}>{fmt(m.date)}</div>
-                      {m.current && <div className="uppercase" style={{ fontFamily: MONO, fontSize: 9, letterSpacing: "0.12em", color: C.active, marginTop: 2 }}>Current</div>}
-                    </td>
-                    <td style={{ padding: "9px 10px", verticalAlign: "top", fontFamily: MONO, fontSize: 12 }}>
-                      {!m.move?.project ? "—"
-                        : m.move.fromProject && m.move.fromProject !== m.move.project
-                        ? (<><span style={{ color: C.mute, textDecoration: "line-through" }}>{m.move.fromProject}</span>
-                            <span style={{ color: C.active, margin: "0 4px" }}>→</span>{m.move.project}</>)
-                        : m.move.project}
-                    </td>
-                    <td style={{ padding: "9px 10px", verticalAlign: "top" }}>
-                      {m.move ? <Arrow from={m.move.fromLoc} to={m.move.toLoc} /> : <span style={{ fontSize: 13, color: C.mute }}>—</span>}
-                    </td>
-                    <td style={{ padding: "9px 10px", verticalAlign: "top" }}>
-                      {m.move ? <Arrow from={m.move.fromPer} to={m.move.toPer} /> : <span style={{ fontSize: 13, color: C.mute }}>—</span>}
-                    </td>
-                    <td style={{ padding: "9px 10px", verticalAlign: "top", fontSize: 12.5, color: C.mute }}>{m.move?.why || m.text}</td>
-                    <td style={{ padding: "9px 10px", verticalAlign: "top", fontFamily: MONO, fontSize: 12, textAlign: "right", whiteSpace: "nowrap" }}>{m.days}d</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>)
-      )}
-    </div>
+          ))}
+
+          {tab === "transfers" && <>
+            <div className="ams-tab-bar">
+              <span>Chain of custody, newest first. Held counts the days the asset stayed in each placement.</span>
+              <span className="flex flex-wrap gap-2">
+                <Btn small icon={FileText} onClick={() => onAction("forms")}>Transfer forms</Btn>
+                {chain.length > 0 && <Btn small icon={Download} onClick={exportMoves}>Export CSV</Btn>}
+              </span>
+            </div>
+            {chain.length === 0 ? <EmptyTab>No movements recorded</EmptyTab> : (
+              <div className="ams-table-frame overflow-x-auto">
+                <table className="ams-table" style={{ minWidth: 840 }}>
+                  <thead><tr>{["Date", "Movement", "Project/Location", "Address", "Responsible person", "Reason", "Held"].map((h) => <th key={h} style={{ textAlign: h === "Held" ? "right" : "left" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {[...chain].reverse().map((m, i) => {
+                      const first = m.kind === "register";
+                      return (
+                        <tr key={`${m.ts}-${i}`} style={{ verticalAlign: "top" }}>
+                          <td style={{ fontFamily: MONO, fontSize: 12, whiteSpace: "nowrap" }}>{fmt(m.date)}</td>
+                          <td style={{ whiteSpace: "nowrap" }}>{first ? "Initial placement" : "Transfer"}</td>
+                          <td>{m.move ? <Changed to={projectText(m.move.project)} from={first ? "" : m.move.fromProject && projectText(m.move.fromProject)} /> : "—"}</td>
+                          <td>{m.move ? <Changed to={m.move.toLoc} from={first ? "" : m.move.fromLoc} /> : "—"}</td>
+                          <td>{m.move ? <Changed to={m.move.toPer} from={first ? "" : m.move.fromPer} /> : "—"}</td>
+                          <td>
+                            <div>{m.move?.why || m.text}</div>
+                            {m.recordedBy && <div className="ams-from">Recorded by {m.recordedBy}</div>}
+                          </td>
+                          <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                            <div style={{ fontFamily: MONO, fontSize: 12.5 }}>{plural(m.days, "day")}</div>
+                            {m.current && <div className="ams-current">current</div>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>}
+
+          {tab === "repairs" && (tickets.length === 0 ? <EmptyTab>No repairs recorded</EmptyTab> : (
+            <div className="ams-table-frame overflow-x-auto">
+              <table className="ams-table" style={{ minWidth: 620 }}>
+                <thead><tr>{["Ticket", "Fault", "Reported", "Status", "Total cost"].map((h) => <th key={h} style={{ textAlign: h === "Total cost" ? "right" : "left" }}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {tickets.map((t) => {
+                    const st = t.closed ? { label: "Closed", color: C.retired, tint: TINT.idle } : { label: STAGES[t.stage].avail, color: STAGES[t.stage].color, tint: STAGES[t.stage].tint };
+                    return (
+                      <tr key={t.id} className="ams-row-link" tabIndex={0} onClick={() => onAction("ticket", t.id)}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onAction("ticket", t.id); } }}>
+                        <td><RecordTag>{t.ticket}</RecordTag></td>
+                        <td>{t.fault}</td>
+                        <td style={{ fontFamily: MONO, fontSize: 12, whiteSpace: "nowrap" }}>{fmt(t.date)}</td>
+                        <td><Chip color={st.color} tint={st.tint}>{st.label}</Chip></td>
+                        <td style={{ fontFamily: MONO, textAlign: "right", whiteSpace: "nowrap" }}>{peso(repairTotal(t))}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr><td colSpan={4} className="ams-tfoot-label">All repairs to date</td><td style={{ fontFamily: MONO, fontWeight: 700, textAlign: "right", whiteSpace: "nowrap" }}>{peso(repairSpend)}</td></tr>
+                </tfoot>
+              </table>
+            </div>
+          ))}
+
+          {tab === "maintenance" && <>
+            {can("maintenance.manage") && (
+              <div className="ams-tab-bar" style={{ justifyContent: "flex-end" }}>
+                <Btn small icon={Plus} onClick={() => onAction("schedule")}>Add schedule</Btn>
+              </div>
+            )}
+            {plans.length === 0 ? <EmptyTab>No maintenance scheduled</EmptyTab> : (
+              <div className="ams-table-frame overflow-x-auto">
+                <table className="ams-table" style={{ minWidth: 700 }}>
+                  <thead><tr>{["Maintenance", "Repeat", "Next due", "Provider or office", "Spent", ""].map((h, i) => <th key={i} style={{ textAlign: h === "Spent" ? "right" : "left" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {plans.map((p) => {
+                      const d = daysUntil(p.nextDue);
+                      const due = dueOf(p);
+                      return (
+                        <tr key={p.id} style={{ verticalAlign: "top" }}>
+                          <td style={{ fontWeight: 500 }}>{p.name}</td>
+                          <td style={{ whiteSpace: "nowrap" }}>{cap(everyLabel(p))}</td>
+                          <td style={{ whiteSpace: "nowrap" }}>
+                            <div style={{ fontFamily: MONO, fontSize: 12 }}>{fmt(p.nextDue)}</div>
+                            <div style={{ fontSize: 11.5, fontWeight: 600, color: due.color }}>
+                              {d < 0 ? `${plural(-d, "day")} overdue` : d === 0 ? "Due today" : `In ${plural(d, "day")}`}
+                            </div>
+                          </td>
+                          <td>{p.provider || <span className="ams-dl-empty">Not recorded</span>}</td>
+                          <td style={{ fontFamily: MONO, textAlign: "right", whiteSpace: "nowrap" }}>{peso(planSpend(p))}</td>
+                          <td style={{ textAlign: "right" }}>
+                            {can("maintenance.manage") && <Btn small icon={CalendarCheck} onClick={() => onAction("logPlan", p.id)}>Record completion</Btn>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>}
+        </div>
+      </aside>
+    </>
   );
 }
 

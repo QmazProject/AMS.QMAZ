@@ -17,7 +17,7 @@
   /* ground and surfaces */
   --ams-bg: #2d3332;
   --ams-rail: #252a29;
-  --ams-surface: #343a39;
+  --ams-surface: #353c3b;
   --ams-surface-2: #3a4140;
   --ams-well: #272c2b;
   --ams-line: #4a5352;
@@ -38,8 +38,8 @@
   --ams-red-hi: #e8524c;
   --ams-red-deep: #b8231d;
 
-  /* Information ramp. Ratios are against the card #343a39, where most
-     reading happens. */
+  /* Information ramp. Ratios are against the card #353c3b, where most
+     reading happens. *
   --ams-text: #eff3e9;  /* primary   10.0:1 */
   --ams-head: #f8faf4;  /* headings  10.9:1 */
   --ams-mute: #bac2b8;  /* secondary  6.2:1 */
