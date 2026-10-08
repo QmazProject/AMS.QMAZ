@@ -7,7 +7,7 @@ const COLORS = {
   ink: 'var(--ams-text)', mute: 'var(--ams-mute)', rule: 'var(--ams-line)', softRule: 'var(--ams-line-soft)',
   surface: 'var(--ams-surface)', soft: 'var(--ams-surface-2)', active: 'var(--ams-ok)',
   ok: 'var(--ams-ok)', danger: 'var(--ams-alarm)', head: 'var(--ams-head)',
-  brand: 'var(--ams-yellow)', brandInk: 'var(--ams-on-yellow)', brandEdge: 'var(--ams-yellow-deep)',
+  brand: 'var(--ams-sand)', brandInk: 'var(--ams-on-sand)', brandEdge: 'var(--ams-sand-deep)',
 }
 const input = { width: '100%', border: `1px solid ${COLORS.rule}`, borderRadius: 3, padding: '8px 9px', fontSize: 13.5, background: 'var(--ams-well)', color: 'var(--ams-text)' }
 const emptyForm = {
@@ -37,10 +37,12 @@ const permissionMatrix = [
   ['User Management', 'Full', 'No', 'No', 'No', 'No'],
 ]
 
+/* the register's own button look (.ams-btn, in its chrome stylesheet), so
+   this page's actions match every other page's */
 function Button({ children, onClick, icon: Icon, primary, danger, disabled, type = 'button' }) {
   return (
-    <button type={type} disabled={disabled} onClick={onClick} className="inline-flex items-center justify-center gap-2 px-3 py-2"
-      style={{ border: `1px solid ${primary ? COLORS.brandEdge : danger ? COLORS.danger : COLORS.rule}`, background: primary ? 'linear-gradient(180deg,var(--ams-yellow-hi) 0%,var(--ams-yellow) 44%,var(--ams-yellow-deep) 100%)' : 'var(--ams-surface)', color: primary ? COLORS.brandInk : danger ? COLORS.danger : COLORS.ink, borderRadius: 3, fontSize: 13, opacity: disabled ? 0.5 : 1 }}>
+    <button type={type} disabled={disabled} onClick={onClick} className="ams-btn justify-center"
+      data-kind={primary ? 'solid' : danger ? 'danger' : 'ghost'}>
       {Icon && <Icon size={14} />}{children}
     </button>
   )
@@ -109,7 +111,7 @@ function UserForm({ value, roles, companies, assetGroups, onClose, onSave, busy 
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(12,14,22,.50)' }}>
+    <div className="ams-scrim fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="relative w-full" style={{ maxWidth: 780 }}>
       <form ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
         onSubmit={submit} className="w-full overflow-auto" style={{ maxHeight: '94vh', background: COLORS.surface, borderRadius: 3, outline: 'none' }}>
@@ -148,7 +150,7 @@ function UserForm({ value, roles, companies, assetGroups, onClose, onSave, busy 
       </form>
 
       {askDiscard && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center p-5" style={{ background: 'rgba(11,13,15,.55)' }}>
+        <div className="ams-scrim absolute inset-0 z-10 flex items-center justify-center p-5">
           <div role="alertdialog" aria-modal="true" aria-label="You have unsaved changes"
             className="p-5" style={{ maxWidth: 380, background: COLORS.surface, border: `1px solid ${COLORS.rule}`, borderRadius: 3 }}>
             <div style={{ fontSize: 15.5, fontWeight: 650 }}>You have unsaved changes</div>

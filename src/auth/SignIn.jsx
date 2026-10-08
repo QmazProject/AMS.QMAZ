@@ -1603,7 +1603,7 @@ const styles = `
     min-height: 100vh;
     background: var(--ink);
     color: var(--text);
-    font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     -webkit-font-smoothing: antialiased;
   }
   .am-auth *{box-sizing:border-box}

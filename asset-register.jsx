@@ -6,8 +6,8 @@ import * as XLSX from "xlsx";
 import {
   Plus, Search, ArrowLeftRight, Wrench, Archive, Pencil, Trash2, ChevronLeft,
   Download, Upload, X, RotateCcw, CircleDot, AlertCircle, AlertTriangle,
-  ChevronRight, ChevronDown, Package, ShoppingBasket, ClipboardList, CalendarClock, CalendarCheck, BarChart3, Repeat, Coins, QrCode, ShoppingCart, Receipt, Paperclip, Settings, Building2, Tag, MapPin, Map as MapIcon, Layers,
-  Users, Menu, CheckCircle2, Printer, Eye, FileText, Hash,
+  ChevronRight, ChevronDown, Package, ShoppingBasket, ClipboardList, CalendarClock, CalendarCheck, BarChart3, Coins, QrCode, ShoppingCart, Receipt, Paperclip, Settings, Building2, Tag, MapPin, Map as MapIcon, Layers,
+  Users, CheckCircle2, Printer, Eye, FileText, Hash,
 } from "lucide-react";
 import UserManagement from "./src/UserManagement.jsx";
 import { useDialogFocus, useEscapeKey } from "./src/lib/modal.js";
@@ -39,42 +39,33 @@ import { discoverLegacyBrowserData, importLegacySnapshot, parseLegacyBackup } fr
 import { AssetImportError, ASSET_SHEET_NAME, buildTemplate, planAssetImport, readAssetSheet } from "./src/data/assetExcelImport.js";
 
 /* --------------------------------------------------------------------
-   Heavy-equipment scheme. The machine body is black; equipment yellow is
-   the marking colour - it carries text, edges, the active rail and the
-   primary action, never a large surface. Every value comes from the token
-   block in src/index.css, so this file states roles rather than colours
-   and a re-skin never has to touch a component again.
+   Huemint dark scheme. Slate ground, pale text, sand for primary actions
+   and selection, red only as stripes and fills. Every value comes from the
+   token block in src/index.css, so this file states roles rather than
+   colours and a re-skin never has to touch a component again.
 --------------------------------------------------------------------- */
 const C = {
   paper: "var(--ams-bg)", surface: "var(--ams-surface)", ink: "var(--ams-text)", mute: "var(--ams-mute)",
   rule: "var(--ams-line)", ruleSoft: "var(--ams-line-soft)", soft: "var(--ams-surface-2)",
-  brand: "var(--ams-yellow)", brandInk: "var(--ams-on-yellow)", brandEdge: "var(--ams-yellow-deep)",
-  brandDeep: "var(--ams-gold-ink)", head: "var(--ams-head)", dim: "var(--ams-dim)",
+  brand: "var(--ams-sand)", brandInk: "var(--ams-on-sand)", brandEdge: "var(--ams-sand-deep)",
+  brandDeep: "var(--ams-sand-ink)", head: "var(--ams-head)", dim: "var(--ams-dim)",
   active: "var(--ams-ok)", retired: "var(--ams-idle)", due: "var(--ams-warn)",
   overdue: "var(--ams-alarm)", ok: "var(--ams-ok)",
 };
 const TINT = {
-  brand: "var(--ams-yellow-tint)", ok: "var(--ams-ok-tint)", warn: "var(--ams-warn-tint)",
+  brand: "var(--ams-sand-tint)", ok: "var(--ams-ok-tint)", warn: "var(--ams-warn-tint)",
   alarm: "var(--ams-alarm-tint)", info: "var(--ams-info-tint)", idle: "var(--ams-idle-tint)",
+  test: "var(--ams-test-tint)",
 };
-/* Stamped-plate face for the primary action: bright top edge, body colour,
-   then a darker rolled bottom edge. */
-const PLATE = "linear-gradient(180deg,var(--ams-yellow-hi) 0%,var(--ams-yellow) 44%,var(--ams-yellow-deep) 100%)";
-const PLATE_HOVER = "linear-gradient(180deg,var(--ams-yellow-lift) 0%,var(--ams-yellow-hi) 44%,var(--ams-yellow) 100%)";
-/* Same stamped-plate shape, in the workspace's fixed red — used only by the
-   top bar's own controls, which wear the app's red/white brand rather than
-   the yellow accent or a per-company theme colour. */
-const PLATE_RED = "linear-gradient(180deg,#ff4d4a 0%,#e8120f 44%,#c4130f 100%)";
-const PLATE_RED_HOVER = "linear-gradient(180deg,#ff7a77 0%,#ff4d4a 44%,#e8120f 100%)";
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, "Roboto Mono", monospace';
-const SANS = '"Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-const DISPLAY = '"Space Grotesk", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const SANS = '"Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const DISPLAY = SANS;
 
 const STAGES = {
   broken: { label: "For repair", avail: "For repair", color: C.overdue, tint: TINT.alarm },
   parts: { label: "Parts purchase", avail: "Awaiting parts", color: C.due, tint: TINT.warn },
   ongoing: { label: "Ongoing repair", avail: "Ongoing repair", color: "var(--ams-info)", tint: TINT.info },
-  testing: { label: "Done — for testing", avail: "Under testing", color: C.brandDeep, tint: TINT.brand },
+  testing: { label: "Done — for testing", avail: "Under testing", color: "var(--ams-test)", tint: TINT.test },
 };
 const STAGE_ORDER = ["broken", "parts", "ongoing", "testing"];
 
@@ -246,9 +237,6 @@ CATEGORY_ACTIONS.editCategory = {
 };
 
 const NO_PROJECT = "X";
-
-/* An asset that has been handed on carries a movement in its history. */
-const hasMoved = (a) => (a?.history || []).some((h) => h.kind === "transfer");
 
 /* Whatever the asset already holds stays selectable, so one recorded before
    this list existed can still be saved without renaming its person. */
@@ -714,49 +702,8 @@ const ASSET_ACTIONS = {
     },
     validate: checkUnique,
   },
-  edit: {
-    title: "Edit details", submit: "Save changes",
-    fields: (a, x, v = {}) => {
-      const cat = v.category ?? a.category ?? "";
-      return [
-      { key: "tag", label: "Asset number", required: true, value: a.tag, mono: true },
-      { key: "code", label: "Asset code (QR sticker)", mono: true, value: a.code, hint: "Change this only if the sticker was replaced" },
-      { key: "company", label: "Company", type: "select", options: x.companyNames, value: a.company, required: x.companyNames.length > 0 },
-      { key: "name", label: "What is it", required: true, value: a.name },
-      { key: "category", label: "Category", type: "select", options: x.categoryNames, value: a.category },
-      { key: "brand", label: "Brand/Manufacturer", type: "select", value: a.brand,
-        options: withCurrent(x.brandNames, a.brand),
-        hint: "Configured under Settings — Brands and models." },
-      { key: "model", label: "Model", type: "select", value: a.model,
-        options: withCurrent(x.modelsOf(v.brand ?? a.brand), (v.brand ?? a.brand) === a.brand ? a.model : ""),
-        derivedOn: (v.brand ?? a.brand) || "", derived: "",
-        hint: !(v.brand ?? a.brand) ? "Choose a brand first." : null },
-      { key: "serial", label: serialLabel(cat), value: a.serial, mono: true },
-      ...vehicleFields(cat, a),
-      ...bodyField(cat, { key: "body", label: "Body number", value: a.body, mono: true }),
-      { key: "acquired", label: "Date acquired", type: "date", value: a.acquired },
-      { key: "cost", label: "Acquisition cost", type: "number", value: a.cost },
-      /* Correctable while the asset has never moved; once it has, the transfer
-         trail owns who holds it and editing here would rewrite that silently. */
-      ...(hasMoved(a)
-        ? [{ key: "custodian", label: "Responsible person", value: a.custodian, readOnly: true,
-            hint: "Set by the last transfer. Use Transfer to hand this asset to someone else." }]
-        : [{ key: "custodian", label: "Responsible person", required: true, type: "select",
-            options: peopleWith(x.people, a.custodian), value: a.custodian,
-            hint: "Configured under Settings — Responsible persons." }]),
-      { key: "photos", label: "Asset images", type: "images", full: true, value: imageEntries(a),
-        accept: PHOTO_TYPES,
-        empty: "This asset has no images yet.",
-        hint: "JPG, PNG, WEBP, GIF or HEIC, up to 10 MB each. The one marked Default is what the register shows wherever it has room for a single picture — beside the asset in the list, and at the top of this panel." },
-      { key: "files", label: "Documents", type: "files", full: true, value: docEntries(a),
-        accept: DOC_ACCEPT, onOpen: x.openFile,
-        empty: "No documents are filed against this asset yet.",
-        hint: "PDF, JPG or PNG, up to 10 MB each. Give each one a type so it can be found by what it is rather than by who filed it." },
-      { key: "notes", label: "Notes", type: "textarea", value: a.notes, full: true },
-      ];
-    },
-    validate: checkUnique,
-  },
+  /* the form itself is AssetForm, shared with register */
+  edit: { title: "Edit details", submit: "Save changes" },
   transfer: {
     title: "Transfer asset", submit: "Record transfer",
     /* The paperwork travels with the asset, so it can be run off while the
@@ -993,6 +940,13 @@ const MetricTile = ({ label, value, tone = C.ink, hint }) => (
   </div>
 );
 
+/* A record number - asset, repair ticket, transfer - on a light plate with a
+   red stripe down its left edge, so a number reads as a number wherever it
+   turns up. */
+const RecordTag = ({ children, big, style }) => (
+  <span className="ams-tag" data-big={big ? "1" : undefined} style={style}>{children}</span>
+);
+
 /* An icon drawn from an image file in public/icon. A black silhouette is used
    as a mask over the control's own text colour, so it follows the button the
    way a line icon did; full-colour art (mask={false}) is shown as it is. */
@@ -1002,17 +956,11 @@ function ImgIcon({ src, size = 16, mask = true, className, style }) {
     : <img aria-hidden="true" alt="" src={src} width={size} height={size} className={className} style={{ display: "block", flex: "0 0 auto", objectFit: "contain", ...style }} />;
 }
 
+/* kind is "solid" (the sand primary action), "ghost" or "danger"; the look
+   of each lives with the rest of the chrome in CHROME_CSS */
 function Btn({ children, onClick, icon: Icon, img, kind = "ghost", small, disabled, iconClass }) {
-  const s = {
-    solid: { background: PLATE, color: C.brandInk, border: `1px solid ${C.brandEdge}`, fontWeight: 800, boxShadow: "0 3px 0 var(--ams-yellow-dim)" },
-    /* the primary action of a form that registers something new */
-    red: { background: C.overdue, color: "#fff", border: `1px solid ${C.overdue}`, fontWeight: 800, boxShadow: "0 3px 0 rgba(0,0,0,.28)" },
-    ghost: { background: C.surface, color: C.ink, border: `1px solid ${C.rule}` },
-    danger: { background: C.surface, color: C.overdue, border: `1px solid ${C.rule}` },
-  }[kind];
   return (
-    <button onClick={disabled ? undefined : onClick} disabled={disabled} className="inline-flex items-center gap-2 transition-opacity hover:opacity-75 disabled:opacity-40 disabled:hover:opacity-40"
-      style={{ ...s, minHeight: small ? 34 : 40, borderRadius: 10, fontFamily: SANS, fontSize: small ? 12.5 : 13, fontWeight: 700, padding: small ? "0 10px" : "0 13px", cursor: disabled ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
+    <button onClick={disabled ? undefined : onClick} disabled={disabled} className="ams-btn" data-kind={kind} data-small={small ? "1" : undefined}>
       {img ? <ImgIcon src={img} size={small ? 13 : 14} className={iconClass} /> : Icon && <Icon size={small ? 13 : 14} strokeWidth={2} className={iconClass} />}{children}
     </button>
   );
@@ -1502,7 +1450,7 @@ function MediaGallery({ items, at, onClose, resolve }) {
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(25,28,39,0.6)" }}>
+    <div className="ams-scrim fixed inset-0 z-50 flex items-center justify-center p-4">
       <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
         className="flex flex-col"
         /* A fixed frame, not one that wraps its contents: paging through a
@@ -1681,7 +1629,7 @@ function Field({ f, value, onChange, bad }) {
 function DiscardPrompt({ onKeep, onDiscard }) {
   const titleId = useId();
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center p-5" style={{ background: "rgba(11,13,15,.55)" }}>
+    <div className="ams-scrim absolute inset-0 z-10 flex items-center justify-center p-5">
       <div role="alertdialog" aria-modal="true" aria-labelledby={titleId}
         className="p-5" style={{ maxWidth: 380, background: C.surface, border: `1px solid ${C.rule}`, borderRadius: 2 }}>
         <div id={titleId} style={{ fontSize: 15.5, fontWeight: 600 }}>You have unsaved changes</div>
@@ -1761,7 +1709,7 @@ function AssetImportDialog({ def, ctx, existing, onCancel, onImport, busy }) {
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6" style={{ background: "rgba(25,28,39,0.45)" }}>
+    <div className="ams-scrim fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6">
       <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
         className="w-full overflow-y-auto"
         style={{ maxWidth: 640, maxHeight: "92vh", background: C.surface, borderRadius: 2, border: `1px solid ${C.rule}`, outline: "none" }}>
@@ -2051,14 +1999,18 @@ function Dialog({ def, subject, header, ctx, onCancel, onSubmit, busy = false })
     if (heavy) return setErr(`${heavy.file.name} is ${kb(heavy.file.size)}. The limit is 10 MB per document.`);
     onSubmit(Object.fromEntries(fields.map((f) => [f.key, vals[f.key] ?? ""])));
   };
+  /* Two sizes, as in the reference build: 560px for an ordinary form, 860px
+     for one carrying a list of parts, photographs or documents, whose rows
+     need the room. */
+  const width = fields.some((f) => ["parts", "images", "files"].includes(f.type)) ? 860 : 560;
   /* No dismiss on the backdrop: a dialog is left through the X or Cancel, so a
      stray tap beside it cannot throw away what was typed. */
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6" style={{ background: "rgba(25,28,39,0.45)" }}>
-      <div className="relative w-full" style={{ maxWidth: 620 }}>
+    <div className="ams-scrim fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6">
+      <div className="relative w-full" style={{ maxWidth: width }}>
       <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
         className="w-full overflow-y-auto"
-        style={{ maxWidth: 620, maxHeight: "92vh", background: C.surface, borderRadius: 2, border: `1px solid ${C.rule}`, outline: "none" }}>
+        style={{ maxWidth: width, maxHeight: "92vh", background: C.surface, borderRadius: 2, border: `1px solid ${C.rule}`, outline: "none" }}>
         <div className="flex items-start justify-between px-5 py-4" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
           <div>
             <div id={titleId} style={{ fontSize: 17, fontWeight: 600 }}>{def.title}</div>
@@ -2084,11 +2036,280 @@ function Dialog({ def, subject, header, ctx, onCancel, onSubmit, busy = false })
             <Btn small icon={def.aside.icon} onClick={() => def.aside.run(vals, subject, ctx)} disabled={busy}>{def.aside.label}</Btn>
           )}
           <span className="flex-1" />
-          <Btn onClick={requestClose} disabled={busy}>Cancel</Btn><Btn kind={def === ASSET_ACTIONS.register ? "red" : "solid"} onClick={go} disabled={!!dupe || busy}>{busy ? "Saving…" : def.submit}</Btn>
+          <Btn onClick={requestClose} disabled={busy}>Cancel</Btn><Btn kind="solid" onClick={go} disabled={!!dupe || busy}>{busy ? "Saving…" : def.submit}</Btn>
         </div>
 
         {askDiscard && <DiscardPrompt onKeep={() => setAskDiscard(false)} onDiscard={onCancel} />}
       </div>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================================
+   The asset form: Register asset, and Edit for an asset already on the
+   register. One form for both, in four sections - Asset, Identification,
+   Assignment, Acquisition - laid out as in the reference build.
+
+   Identification follows the category: the identifiers a category carries
+   are shown, and the ones it does not are hidden and cleared the moment the
+   category changes, so nothing typed under the old one rides along unseen.
+
+   Required fields say so under themselves, but only once a save has been
+   tried; a form that turns red before anyone has typed is shouting. A
+   duplicate identifier is different - it is said as it is typed, because
+   finding out after filling in everything else is worse.
+   ========================================================================= */
+const ID_SHORT = { engine: "engine", plate: "plate", mvFile: "MV file", conduction: "conduction" };
+/* identifiers compare without case or spaces: "ABC 1234" and "abc1234" are
+   the same plate */
+const idKey = (v) => String(v ?? "").replace(/\s+/g, "").toLowerCase();
+const listWords = (words) => (words.length < 2 ? words.join("") : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`);
+const identifierLine = (cat) => {
+  if (!cat) return "Select a category to show its identification fields.";
+  const words = [catKind(cat) === "other" ? "Serial number" : "Serial/chassis", ...vehicleKeys(cat).map((k) => ID_SHORT[k])];
+  return `${listWords(words)} for this category`;
+};
+const ASSET_FORM_LABELS = {
+  tag: "Asset number", code: "Asset code", company: "Company", name: "Asset name", category: "Category",
+  brand: "Brand/Manufacturer", model: "Model", body: "Body number", serial: "Serial number",
+  engine: "Engine number", plate: "Plate number", mvFile: "MV file number", conduction: "Conduction sticker",
+  acquired: "Date acquired", cost: "Acquisition cost", notes: "Notes", photos: "Images", files: "Documents",
+};
+const ASSET_TEXT_KEYS = ["tag", "code", "company", "name", "category", "brand", "model", "body", "serial", "engine", "plate", "mvFile", "conduction",
+  "project", "location", "custodian", "acquired", "cost", "notes"];
+
+function AssetForm({ mode, asset, ctx, busy = false, serverError = "", onCancel, onSubmit }) {
+  const editing = mode === "edit";
+  const titleId = useId();
+  const panel = useRef(null);
+  const [opened] = useState(() => {
+    const a = asset || {};
+    return editing ? {
+      ...Object.fromEntries(ASSET_TEXT_KEYS.map((k) => [k, a[k] ?? ""])),
+      project: a.project && a.project !== NO_PROJECT ? a.project : NO_PROJECT,
+      photos: imageEntries(a), files: docEntries(a),
+    } : {
+      ...Object.fromEntries(ASSET_TEXT_KEYS.map((k) => [k, ""])),
+      tag: ctx.nextTag, acquired: today(), photos: [], files: [],
+    };
+  });
+  const [vals, setVals] = useState(opened);
+  const [tried, setTried] = useState(false);
+  const [askDiscard, setAskDiscard] = useState(false);
+
+  const cat = vals.category;
+  /* with no categories set up there is nothing to choose, so the plain serial
+     number is offered rather than no identifiers at all */
+  const catChosen = !!cat || ctx.categoryNames.length === 0;
+  const idKeys = catChosen ? ["serial", ...vehicleKeys(cat)] : [];
+  const bodyShown = hasBodyNumber(cat);
+  const site = ctx.projects.find((pr) => pr.pid === vals.project);
+
+  const set = (key, value) => setVals((now) => {
+    const next = { ...now, [key]: value };
+    if (key === "category") {
+      /* fields the new category does not carry are hidden, and cleared */
+      const keep = new Set([...(value || ctx.categoryNames.length === 0 ? ["serial", ...vehicleKeys(value)] : []), ...(hasBodyNumber(value) ? ["body"] : [])]);
+      ["serial", ...VEHICLE_ONLY, "body"].forEach((k) => { if (!keep.has(k)) next[k] = ""; });
+    }
+    /* a model belongs to its make */
+    if (key === "brand" && value !== now.brand) next.model = "";
+    /* a site brings its own address; X is typed by hand */
+    if (key === "project") {
+      const pr = ctx.projects.find((one) => one.pid === value);
+      next.location = pr ? pr.location : value === NO_PROJECT && now.project !== NO_PROJECT ? "" : value ? now.location : "";
+    }
+    return next;
+  });
+
+  /* what has to be filled in, as the reference marks it */
+  /* in an edit the assignment is read-only, so it is shown rather than asked for */
+  const required = [
+    "tag", "name", ...(editing ? [] : ["project", "location", "custodian"]),
+    ...(ctx.companyNames.length ? ["company"] : []),
+    ...(ctx.categoryNames.length ? ["category"] : []),
+  ];
+  const missing = new Set(required.filter((k) => !String(vals[k] ?? "").trim()));
+
+  /* identifiers already on another asset, checked as they are typed */
+  const checked = ["tag", "code", ...(bodyShown ? ["body"] : []), ...idKeys];
+  const clashes = Object.fromEntries(checked.map((k) => {
+    const owner = ctx.idOwners?.[k]?.[idKey(vals[k])];
+    return [k, idKey(vals[k]) && owner && owner.id !== asset?.id ? owner : null];
+  }).filter(([, owner]) => owner));
+  const clashed = Object.keys(clashes).length > 0;
+
+  /* documents and photographs carry rules of their own, kept from the form
+     this replaces */
+  const fileProblem = (() => {
+    const untyped = (vals.files || []).find((row) => !docTypeValue(row));
+    if (untyped) return `Choose a type for ${untyped.label || untyped.file?.name || "each document"}.`;
+    const heavy = (vals.files || []).find((row) => row.file && row.file.size > DOC_LIMIT && !String(row.file.type || "").startsWith("image/"));
+    if (heavy) return `${heavy.file.name} is ${kb(heavy.file.size)}. The limit is 10 MB per document.`;
+    return "";
+  })();
+
+  const changedKeys = Object.keys(ASSET_FORM_LABELS).filter((k) => {
+    if (k === "photos" || k === "files") return !sameRows(vals[k] || [], opened[k] || []) || (vals[k] || []).some((row) => row.file instanceof File);
+    return String(vals[k] ?? "").trim() !== String(opened[k] ?? "").trim();
+  });
+  const dirty = changedKeys.length > 0 || ["project", "location", "custodian"].some((k) => String(vals[k] ?? "") !== String(opened[k] ?? ""));
+
+  const requestClose = () => {
+    if (busy) return;
+    if (dirty) return setAskDiscard(true);
+    onCancel();
+  };
+  useEscapeKey(!busy, requestClose);
+  useEscapeKey(askDiscard, () => setAskDiscard(false));
+  useDialogFocus(panel);
+
+  const save = () => {
+    setTried(true);
+    if (clashed || missing.size || fileProblem) return;
+    /* an edit that changes nothing has nothing to save */
+    if (editing && !changedKeys.length) return onCancel();
+    const out = { ...vals };
+    ["serial", ...VEHICLE_ONLY].forEach((k) => { if (!idKeys.includes(k)) out[k] = ""; });
+    if (!bodyShown) out.body = "";
+    onSubmit(out, { changed: changedKeys.map((k) => (k === "serial" ? serialLabel(cat) : ASSET_FORM_LABELS[k]).toLowerCase()) });
+  };
+
+  const message = clashed ? "An identifier is already on another asset. Change it to save."
+    : tried && missing.size ? "Complete the highlighted fields."
+      : tried && fileProblem ? fileProblem
+        : serverError;
+
+  const errorOf = (key) => clashes[key]
+    ? `Already on ${clashes[key].tag} (${clashes[key].name})`
+    : tried && missing.has(key) ? "Required" : "";
+
+  /* one field: its label, the control, then whichever of error or hint applies */
+  const field = (key, label, control, { hint, full, mark = required.includes(key) } = {}) => {
+    const error = errorOf(key);
+    return (
+      <div key={key} className="ams-field" data-full={full ? "1" : undefined}>
+        <label htmlFor={`${titleId}-${key}`}>{label}{mark && <span className="ams-req"> *</span>}</label>
+        {control(error)}
+        {error ? <div className="ams-field-error">{error}</div> : hint ? <div className="ams-field-hint">{hint}</div> : null}
+      </div>
+    );
+  };
+  const text = (key, { mono, placeholder, type = "text", locked, list } = {}) => (error) => (
+    <>
+      <input id={`${titleId}-${key}`} type={type} className="ams-input" value={vals[key] ?? ""}
+        readOnly={locked} data-locked={locked ? "1" : undefined} aria-invalid={error ? "true" : undefined}
+        placeholder={placeholder} list={list && !locked ? `${titleId}-${key}-list` : undefined}
+        style={mono ? { fontFamily: MONO } : undefined}
+        onChange={(e) => set(key, e.target.value)} />
+      {list && !locked && <datalist id={`${titleId}-${key}-list`}>{list.map((o) => <option key={o} value={o} />)}</datalist>}
+    </>
+  );
+  const choose = (key, options, { locked, placeholder = "Select…" } = {}) => (error) => (
+    <select id={`${titleId}-${key}`} className="ams-input" value={vals[key] ?? ""} disabled={locked}
+      data-locked={locked ? "1" : undefined} aria-invalid={error ? "true" : undefined}
+      onChange={(e) => set(key, e.target.value)}>
+      <option value="">{placeholder}</option>
+      {options.map((o) => (typeof o === "string"
+        ? <option key={o} value={o}>{o}</option>
+        : <option key={o.value} value={o.value}>{o.label}</option>))}
+    </select>
+  );
+
+  const tagLocked = !editing && ctx.tagIsIssued;
+  const assignLocked = editing;
+
+  return (
+    <div className="ams-scrim fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6">
+      <div className="relative w-full" style={{ maxWidth: 860 }}>
+        <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className="ams-modal">
+          <div className="ams-modal-head">
+            <div id={titleId} className="ams-modal-title">{editing ? `Edit ${asset?.tag || "asset"}` : "Register asset"}</div>
+            <button type="button" className="ams-icon-btn" onClick={requestClose} disabled={busy} aria-label="Close"><X size={18} /></button>
+          </div>
+
+          <div className="ams-modal-body">
+            <section className="ams-form-section">
+              <div className="ams-form-section-title">Asset</div>
+              <div className="ams-form-grid">
+                {field("tag", "Asset number", text("tag", { mono: true, locked: tagLocked }), {
+                  hint: editing ? null : tagLocked ? "Next number in sequence, issued by the system when you save" : "Next number in sequence; change it if needed" })}
+                {field("code", "Asset code (QR sticker)", text("code", { mono: true, placeholder: "Scan or type the sticker code" }))}
+                {field("company", "Company", choose("company", ctx.companyNames), {
+                  hint: ctx.companyNames.length ? null : "Add companies under Settings first" })}
+                {field("name", "Asset name", text("name", { placeholder: "e.g. Dell Latitude 5440" }))}
+                {field("category", "Category", choose("category", ctx.categoryNames), { hint: "Sets the identification fields below" })}
+                {bodyShown && field("body", "Body number", text("body", { mono: true, placeholder: "BN-14" }))}
+              </div>
+            </section>
+
+            <section className="ams-form-section">
+              <div className="ams-form-section-title">Identification</div>
+              <div className="ams-form-section-note">{ctx.categoryNames.length === 0 ? "Serial number, until categories are set up under Settings" : identifierLine(cat)}</div>
+              <div className="ams-form-grid">
+                {field("brand", "Brand/Manufacturer", choose("brand", withCurrent(ctx.brandNames, opened.brand)), {
+                  hint: ctx.brandNames.length ? null : "No brands set up yet. Add them under Settings first." })}
+                {field("model", "Model", choose("model", withCurrent(ctx.modelsOf(vals.brand), vals.brand === opened.brand ? opened.model : ""), { locked: !vals.brand }), {
+                  hint: !vals.brand ? "Choose a brand first." : null })}
+                {idKeys.map((k) => (k === "serial"
+                  ? field("serial", serialLabel(cat), text("serial", { mono: true }))
+                  : field(k, VEHICLE_FIELD_DEFS[k].label, text(k, { mono: true, placeholder: VEHICLE_FIELD_DEFS[k].placeholder }))))}
+              </div>
+            </section>
+
+            <section className="ams-form-section">
+              <div className="ams-form-section-title">Assignment</div>
+              {assignLocked && <div className="ams-form-section-note">Change these through Transfer so the chain of custody stays complete</div>}
+              <div className="ams-form-grid">
+                {field("project", "Project/Location", choose("project", [
+                  { value: NO_PROJECT, label: "X (not on a project site)" },
+                  ...ctx.projects.map((pr) => pr.pid),
+                ], { locked: assignLocked }))}
+                {field("location", "Address", text("location", { locked: assignLocked || vals.project !== NO_PROJECT, list: ctx.locations,
+                  placeholder: vals.project === NO_PROJECT ? "Type the address" : "" }), {
+                  hint: assignLocked ? null : site ? `Filled in from ${site.pid}` : vals.project === NO_PROJECT ? "Not a project site, so the address is typed" : "Choose a Project/Location first" })}
+                {field("custodian", "Responsible person", choose("custodian", peopleWith(ctx.people, opened.custodian), { locked: assignLocked }), {
+                  hint: assignLocked ? null : ctx.people.length ? "Custodian at the time of registration" : "No one is configured yet. Add people under Settings first." })}
+              </div>
+            </section>
+
+            <section className="ams-form-section">
+              <div className="ams-form-section-title">Acquisition</div>
+              <div className="ams-form-grid">
+                {field("acquired", "Date acquired", text("acquired", { type: "date" }), {
+                  hint: editing ? null : "Also dates the first entry in the transfer history" })}
+                {field("cost", "Acquisition cost (₱)", text("cost", { type: "number" }), { hint: "Used as the asset value in reports" })}
+                {field("notes", "Notes", () => (
+                  <textarea id={`${titleId}-notes`} className="ams-input" rows={3} value={vals.notes ?? ""} onChange={(e) => set("notes", e.target.value)} />
+                ), { full: true })}
+                <div className="ams-field" data-full="1">
+                  <label>Asset images</label>
+                  <AssetImageRows f={{ accept: PHOTO_TYPES, empty: editing ? "This asset has no images yet." : "No image yet. The first one added becomes the default, and you can change which that is." }}
+                    value={vals.photos} onChange={(v) => set("photos", v)} />
+                  <div className="ams-field-hint">JPG, PNG, WEBP, GIF or HEIC, up to 10 MB each.</div>
+                </div>
+                <div className="ams-field" data-full="1">
+                  <label>Documents</label>
+                  <AttachmentRows f={{ accept: DOC_ACCEPT, onOpen: ctx.openFile,
+                    empty: editing ? "No documents are filed against this asset yet." : "Nothing attached yet. The sales invoice, certificate of registration or deed of sale can go on now, or be added later." }}
+                    value={vals.files} onChange={(v) => set("files", v)} />
+                  <div className="ams-field-hint">PDF, JPG or PNG, up to 10 MB each. Give each one a type.</div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div className="ams-modal-foot">
+            <div className="ams-form-msg" role={message ? "alert" : undefined}>{message}</div>
+            <div className="ams-modal-actions">
+              <Btn onClick={requestClose} disabled={busy}>Cancel</Btn>
+              <Btn kind="solid" onClick={save} disabled={clashed || busy}>{busy ? "Saving…" : editing ? "Save changes" : "Register asset"}</Btn>
+            </div>
+          </div>
+
+          {askDiscard && <DiscardPrompt onKeep={() => setAskDiscard(false)} onDiscard={onCancel} />}
+        </div>
       </div>
     </div>
   );
@@ -2113,188 +2334,80 @@ const Trail = ({ entries }) => (
 );
 
 /* -------------------------- application chrome ---------------------- */
-/* FleetDesk is used only as a layout reference here — its green identity is
-   deliberately not carried over. The product keeps its own gold-and-denim
-   Asset Management identity while adopting the fixed operational rail,
-   quiet workspace, active indicator, and mobile drawer pattern. */
+/* The look follows the reference build's ui-base: the Huemint dark palette,
+   Poppins, an 88px icon rail that becomes a bottom bar on a phone, record
+   numbers on light plates, and dialogs that animate open. Only the look is
+   shared - every workflow behind it is this register's own. */
 
 const CHROME_CSS = `
-.ams-shell{--rail:246px;min-height:100vh;background:var(--ams-bg);color:${C.ink};font-family:${SANS};font-variant-numeric:tabular-nums}
-/* Collapsed, the rail keeps the icons and gives the workspace the rest. One
-   number drives both the rail's width and the page's margin, so they can
-   never disagree mid-transition. */
-.ams-shell[data-collapsed="1"]{--rail:74px}
-.ams-main{min-width:0;min-height:100vh;margin-left:var(--rail);background:var(--ams-bg);transition:margin-left 220ms ease}
+.ams-shell{--rail:88px;min-height:100vh;background:var(--ams-bg);color:${C.ink};font-family:${SANS};font-size:13.5px;font-variant-numeric:tabular-nums}
+.ams-main{min-width:0;min-height:100vh;margin-left:var(--rail);background:var(--ams-bg)}
 
 /* ------------------------------------------------------------------------
-   A white page in a black frame.
+   The rail: 88px, every module an icon over its label.
 
-   The rail and the top bar keep the machine scheme; everything they wrap is
-   a light surface, so the register reads off white while the chrome stays
-   black with its gold markings. It is done by redefining the same role
-   tokens further down the tree rather than by adding light variants of every
-   class: components ask for --ams-surface, and where they sit decides what
-   that means. Not one component knows this scope exists.
-
-   The state colours are re-derived rather than reused — the dark set was
-   tuned for a black ground and measures under 2.5:1 on white.
+   The open module is marked twice, so it never rests on colour alone - a red
+   bar down its left edge and its icon in sand. Red is a stripe here and
+   nowhere a text colour. Counts ride on the icon's corner, the way a badge
+   does, so the label underneath keeps the full width of the rail.
    ------------------------------------------------------------------------ */
-.ams-main,.ams-overlay{
-  --ams-bg:#f2f4f7;
-  --ams-surface:#ffffff;
-  --ams-surface-2:#f4f6f9;
-  --ams-well:#f7f9fb;
-  --ams-line:#dde2e9;
-  --ams-line-soft:#e9edf2;
-  --ams-text:#131820;
-  --ams-head:#0b0d0f;
-  --ams-mute:#59616d;
-  --ams-dim:#626b79;
-  --ams-gold-ink:#8a6a00;
-  --ams-ok:#2e7d32;
-  --ams-warn:#b45309;
-  --ams-alarm:#c62828;
-  --ams-info:#1565c0;
-  --ams-idle:#6b7280;
-  --ams-yellow-tint:rgba(255,205,17,.22);
-  --ams-ok-tint:rgba(46,125,50,.12);
-  --ams-warn-tint:rgba(180,83,9,.12);
-  --ams-alarm-tint:rgba(198,40,40,.12);
-  --ams-info-tint:rgba(21,101,192,.12);
-  --ams-idle-tint:rgba(107,114,128,.12);
-  color:var(--ams-text);
-}
-
-/* The top bar sits inside the light scope but belongs to the frame, so it
-   takes back the handful of roles it actually paints with. */
-.ams-topbar{
-  --ams-bg:#0b0d0f;
-  --ams-surface:#14171b;
-  --ams-well:#1e242c;
-  --ams-surface-2:#1b1f24;
-  --ams-line:#2c323a;
-  --ams-text:#e9edf2;
-  --ams-head:#ffffff;
-  --ams-mute:#a8b2bf;
-  --ams-dim:#8c97a5;
-  color:var(--ams-text);
-}
-/* The rail carries no framing edge - it reads as a flat panel, separated from
-   the workspace by its own slightly lifted surface colour rather than a rule. */
-.ams-sidebar{
-  position:fixed;inset:0 auto 0 0;z-index:50;display:flex;width:var(--rail);flex-direction:column;overflow-y:auto;
-  background:var(--ams-rail);
-  color:${C.ink};transition:transform 220ms ease,width 220ms ease
-}
-.ams-side-head{display:flex;align-items:center;gap:9px;min-height:58px;padding:8px 16px;border-bottom:1px solid var(--ams-line)}
-/* The brand is the full lockup, ams-brand.png: the hexagon badge, then "AMS"
-   and "ASSET MANAGEMENT SYSTEM". The art keeps one height in both rail states
-   and the box in front of it is a window onto it. Expanded, the window shows
-   the whole lockup; collapsed, it narrows to the badge, which is the art's
-   first 240 of 1119 columns. The window's width runs on the rail's own 220ms
-   ease, so the words slide out of view exactly as the rail closes over them. */
-.ams-brand{--brand-h:40px;position:relative;flex:0 0 auto;width:calc(var(--brand-h) * 1119 / 274);height:var(--brand-h);overflow:hidden;transition:width 220ms ease}
+.ams-sidebar{position:fixed;inset:0 auto 0 0;z-index:50;display:flex;width:var(--rail);flex-direction:column;overflow-x:hidden;overflow-y:auto;
+  background:var(--ams-rail);border-right:1px solid var(--ams-line-soft);color:${C.ink};scrollbar-width:none}
+.ams-sidebar::-webkit-scrollbar{display:none}
+.ams-side-head{display:flex;flex-shrink:0;align-items:center;justify-content:center;min-height:64px;padding:10px 0;border-bottom:1px solid var(--ams-line-soft)}
+/* The brand art is the full lockup, ams-brand.png: the hexagon badge, then
+   "AMS" and "ASSET MANAGEMENT SYSTEM". The box in front of it is a window
+   onto the badge alone - the art's first 240 of 1119 columns - which is all
+   an 88px rail has room for. */
+.ams-brand{--brand-h:40px;position:relative;flex:0 0 auto;width:calc(var(--brand-h) * 240 / 274);height:var(--brand-h);overflow:hidden}
 .ams-brand-art{position:absolute;left:0;top:0;width:calc(var(--brand-h) * 1119 / 274);height:100%}
 .ams-brand-art img{display:block;width:100%;height:100%}
 /* Glass glaze, as on the sign-in page: a soft diagonal highlight slides across
-   the lockup, masked by the art's own alpha so it rides the letters and the
-   badge rather than lighting a rectangle round them. */
+   the badge, masked by the art's own alpha so it rides the mark rather than
+   lighting a rectangle round it. */
 .ams-brand-glaze{position:absolute;inset:0;overflow:hidden;pointer-events:none;mix-blend-mode:screen;
   -webkit-mask:url(/ams-brand.png) 0 0/100% 100% no-repeat;mask:url(/ams-brand.png) 0 0/100% 100% no-repeat}
 .ams-brand-glaze:before{content:"";position:absolute;top:-40%;bottom:-40%;left:0;width:26%;
   background:linear-gradient(90deg,rgba(255,255,255,0) 0%,rgba(255,255,255,.3) 36%,rgba(255,255,255,.85) 50%,rgba(255,255,255,.3) 64%,rgba(255,255,255,0) 100%);
   filter:blur(3px);transform:translateX(-130%) skewX(-18deg);animation:ams-glaze 5.5s linear infinite}
 @keyframes ams-glaze{0%{transform:translateX(-130%) skewX(-18deg)}34%,100%{transform:translateX(430%) skewX(-18deg)}}
-.ams-side-close{display:none;margin-left:auto;padding:8px;border:0;border-radius:8px;background:var(--ams-surface-2);color:${C.mute};cursor:pointer}
-.ams-side-status{display:flex;align-items:center;gap:8px;margin:17px 18px 6px;padding:10px 11px;border:1px solid var(--ams-line);border-radius:8px;background:var(--ams-surface);color:${C.mute};font-size:11.5px}
-.ams-side-label{display:flex;align-items:center;gap:9px;padding:19px 22px 8px;color:#fb1f1f;font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase}
-.ams-side-label:after{height:1px;flex:1;background:var(--ams-line);content:""}
-/* Section labels in the brand red; each module a white-outlined row with white
-   words and icons; the open module filled red. The fill runs #e8120f to
-   #c4130f rather than the logo's #fb1f1f, because white on #fb1f1f measures
-   3.95:1 and fails for text this size - these two measure 4.6 and 6.1. */
-.ams-nav{display:flex;flex-direction:column;gap:7px;padding:0 12px}
-.ams-nav-item{position:relative;display:flex;width:100%;min-height:44px;align-items:center;gap:11px;padding:0 11px;border:1px solid #fff;border-radius:8px;background:transparent;color:#fff;font-family:${SANS};font-size:13.5px;font-weight:600;text-align:left;cursor:pointer;transition:background 170ms ease,color 170ms ease,border-color 170ms ease,transform 170ms ease,box-shadow 170ms ease}
-.ams-nav-item:hover{border-color:#fff;background:rgba(255,255,255,.07)}
-.ams-nav-item[aria-current="page"]{border-color:#ff4d4a;background:linear-gradient(135deg,#e8120f,#c4130f);color:#fff;font-weight:700;box-shadow:0 6px 16px rgba(232,18,15,.35)}
-.ams-nav-item svg{flex-shrink:0;color:#fff}
-/* On a pointer, the module lifts toward you: it rises 2px and grows 3% in
-   place, with a shadow under it, and settles back when the pointer leaves.
-   Touch screens have no hover, so there a tap just opens the page. The rail
-   pads the list 12px a side, which is room for the 3% growth, so a lifted
-   module never pushes the rail into a sideways scroll. */
-@media (hover:hover){
-  .ams-nav-item:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 8px 18px rgba(0,0,0,.45)}
-  .ams-nav-item[aria-current="page"]:hover{box-shadow:0 10px 22px rgba(232,18,15,.45)}
-}
-.ams-nav-count{display:inline-flex;min-width:25px;height:21px;margin-left:auto;align-items:center;justify-content:center;padding:0 7px;border:1px solid var(--ams-line);border-radius:4px;background:var(--ams-surface);color:#fff;font-family:${DISPLAY};font-size:10.5px;font-weight:700;font-variant-numeric:tabular-nums}
-.ams-nav-count[data-active="1"]{border-color:#fff;background:#fff;color:#c4130f}
-.ams-nav-count[data-quiet="1"]{color:${C.dim}}
-.ams-side-spacer{min-height:22px;flex:1}
+.ams-nav{display:flex;flex-direction:column;gap:2px;padding:8px 0}
+.ams-side-rule{flex-shrink:0;height:1px;margin:4px 20px;background:var(--ams-line)}
+.ams-nav-item{position:relative;display:flex;width:100%;min-height:62px;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:8px 5px;
+  border:0;background:transparent;color:var(--ams-mute);font-family:${SANS};font-size:10.5px;font-weight:500;line-height:1.2;text-align:center;cursor:pointer;
+  transition:background 170ms ease,color 170ms ease}
+.ams-nav-item:before{position:absolute;top:10px;bottom:10px;left:0;width:3px;border-radius:0 3px 3px 0;background:var(--ams-red);content:"";
+  transform:scaleY(0);transition:transform 220ms cubic-bezier(.2,.8,.25,1)}
+.ams-nav-item:hover{background:rgba(239,243,233,.05);color:var(--ams-text)}
+.ams-nav-item[aria-current="page"]{background:rgba(215,189,137,.08);color:var(--ams-head);font-weight:600}
+.ams-nav-item[aria-current="page"]:before{transform:scaleY(1)}
+.ams-nav-icon{position:relative;display:grid;place-items:center}
+.ams-nav-icon svg{transition:transform 170ms ease,color 170ms ease}
+.ams-nav-item:hover .ams-nav-icon svg{transform:translateY(-1px)}
+.ams-nav-item[aria-current="page"] .ams-nav-icon svg{color:var(--ams-sand)}
+.ams-nav-label{display:block;max-width:100%;overflow-wrap:anywhere}
+.ams-nav-count{position:absolute;top:-7px;left:calc(100% - 5px);display:inline-flex;min-width:18px;height:16px;align-items:center;justify-content:center;padding:0 5px;
+  border:1px solid var(--ams-line);border-radius:999px;background:var(--ams-surface-2);color:var(--ams-text);font-family:${SANS};font-size:9.5px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums}
+.ams-nav-count[data-active="1"]{border-color:var(--ams-sand);background:var(--ams-sand);color:var(--ams-on-sand)}
+.ams-nav-count[data-quiet="1"]:not([data-active]){color:${C.dim}}
+.ams-side-spacer{min-height:12px;flex:1}
 
-/* Collapsed: every label goes, every icon stays and centres. The section
-   labels keep their rule line - it is the only thing separating the two
-   groups of icons once the words are gone.
-
-   Desktop only. Below the breakpoint the rail is a drawer you opened on
-   purpose, and a drawer with its labels stripped out helps nobody - so a
-   narrow window ignores the choice rather than inheriting it. */
-@media (min-width:831px){
-  .ams-shell[data-collapsed="1"] .ams-side-head{justify-content:center;padding:8px}
-  .ams-shell[data-collapsed="1"] .ams-rail-toggle{justify-content:center;padding:0}
-  .ams-shell[data-collapsed="1"] .ams-rail-toggle-label{display:none}
-  .ams-shell[data-collapsed="1"] .ams-brand{width:calc(var(--brand-h) * 240 / 274)}
-  .ams-shell[data-collapsed="1"] .ams-side-status{margin:14px 10px 4px;padding:8px;justify-content:center;font-size:0;gap:0}
-  .ams-shell[data-collapsed="1"] .ams-side-label{padding:17px 12px 8px;font-size:0;letter-spacing:0}
-  .ams-shell[data-collapsed="1"] .ams-nav{padding:0 10px}
-  .ams-shell[data-collapsed="1"] .ams-nav-item{gap:0;justify-content:center;padding:0;border-radius:8px}
-  .ams-shell[data-collapsed="1"] .ams-nav-item>span:not(.ams-nav-count){display:none}
-  .ams-shell[data-collapsed="1"] .ams-nav-count{display:none}
-  .ams-shell[data-collapsed="1"] .ams-profile{margin:16px 10px 14px;padding:10px 6px}
-  .ams-shell[data-collapsed="1"] .ams-profile-row{flex-direction:column;gap:9px}
-  .ams-shell[data-collapsed="1"] .ams-profile-name,.ams-shell[data-collapsed="1"] .ams-profile-role-text{display:none}
-  .ams-shell[data-collapsed="1"] .ams-profile-role{justify-content:center;margin-top:9px;padding:5px}
-}
-
-/* The rail toggle is the desktop twin of the mobile menu button: same shape,
-   but this one narrows the rail rather than opening a drawer over the page. */
-/* The collapse control is the rail's own last row, not a layer floated over
-   the page: it lives inside the rail, so it can never sit on top of a dialog,
-   a menu or the rail's scrollbar, and it moves with the rail because it is
-   part of it. Sticky to the bottom, so a long rail that scrolls still keeps
-   it in reach. The chevron points the way the rail will move: left to close,
-   turned round to point right once it is closed. */
-.ams-rail-toggle{position:sticky;bottom:0;display:flex;flex-shrink:0;align-items:center;gap:10px;width:100%;min-height:46px;padding:0 22px;border:0;border-top:1px solid var(--ams-line);background:var(--ams-rail);color:${C.mute};font:inherit;font-size:12.5px;font-weight:700;letter-spacing:.02em;cursor:pointer;transition:color 180ms ease,background 180ms ease}
-.ams-rail-toggle:hover{background:var(--ams-surface);color:var(--ams-yellow)}
-.ams-rail-toggle svg{flex-shrink:0;transition:transform 220ms ease}
-.ams-shell[data-collapsed="1"] .ams-rail-toggle svg{transform:rotate(180deg)}
-/* The signed-in card, in the rail's red and white: a white outline like the
-   modules above it, a red avatar, and the access level as a strip under the
-   name with its own icon - the key-holder for a super admin, the ID badge for
-   everyone else. The badge and the sign-out glyph are black silhouettes, so
-   they mask white ink rather than being shown as-is; the super admin art is
-   full colour and is shown as it is. */
-.ams-profile{margin:16px 12px 14px;padding:12px;border:1px solid rgba(255,255,255,.85);border-radius:10px;
-  background:linear-gradient(160deg,rgba(255,255,255,.07),rgba(255,255,255,0) 58%),var(--ams-surface)}
-.ams-profile-row{display:flex;align-items:center;gap:10px;min-width:0}
-.ams-avatar{display:grid;width:36px;height:36px;flex-shrink:0;place-items:center;border-radius:9px;background:linear-gradient(135deg,#e8120f,#c4130f);color:#fff;font-family:${MONO};font-size:11.5px;font-weight:800;box-shadow:0 4px 12px rgba(232,18,15,.35)}
-/* every user gets the same default profile figure; the art is a black
-   silhouette, so it masks white ink on the red tile */
-.ams-avatar-icon{display:block;width:22px;height:22px;background:#fff;-webkit-mask:url("/icon/Default%20Prof.png") center/contain no-repeat;mask:url("/icon/Default%20Prof.png") center/contain no-repeat}
-.ams-profile-name{color:#fff;font-size:13px;font-weight:700;line-height:1.25;overflow-wrap:anywhere}
-.ams-profile-role{display:flex;align-items:center;gap:8px;margin-top:10px;padding:6px 9px;border:1px solid rgba(255,255,255,.16);border-radius:7px;background:rgba(255,255,255,.05);color:#fff;font-size:11px;font-weight:600;line-height:1.35}
-.ams-profile-role-text{min-width:0;overflow-wrap:anywhere}
-.ams-access-icon{display:block;width:22px;height:22px;flex-shrink:0;object-fit:contain}
-.ams-access-icon--normal{background:#fff;-webkit-mask:url("/icon/Normal%20Access.png") center/contain no-repeat;mask:url("/icon/Normal%20Access.png") center/contain no-repeat}
-.ams-signout{display:grid;width:34px;height:34px;flex-shrink:0;place-items:center;border:1px solid rgba(255,255,255,.85);border-radius:8px;background:transparent;color:#fff;cursor:pointer;transition:background 170ms ease,border-color 170ms ease,transform 170ms ease,box-shadow 170ms ease}
-.ams-signout-icon{display:block;width:17px;height:17px;background:currentColor;-webkit-mask:url("/icon/logout.png") center/contain no-repeat;mask:url("/icon/logout.png") center/contain no-repeat}
-.ams-signout:hover{border-color:#ff4d4a;background:linear-gradient(135deg,#e8120f,#c4130f);box-shadow:0 6px 14px rgba(232,18,15,.4)}
-@media (hover:hover){.ams-signout:hover{transform:translateY(-1px)}}
-.ams-topbar{position:sticky;top:0;z-index:30;display:flex;min-height:58px;align-items:center;justify-content:space-between;gap:16px;padding:9px 26px;border-bottom:1px solid var(--ams-line);background:#000}
-.ams-top-start{display:flex;min-width:0;align-items:center;gap:12px}
-.ams-menu{display:none;width:40px;height:40px;flex-shrink:0;place-items:center;border:1px solid var(--ams-line);border-radius:8px;background:var(--ams-surface);color:var(--ams-head);cursor:pointer}
-.ams-breadcrumb{color:${C.dim};font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
-.ams-page-title{overflow:hidden;margin:2px 0 0;color:var(--ams-head);font-family:${DISPLAY};font-size:23px;font-weight:700;line-height:1.15;letter-spacing:-.025em;text-overflow:ellipsis;white-space:nowrap}
+/* ------------------------------------------------------------------------
+   The top bar: the open module's name and whether the last change reached
+   the database, then the controls, then who is signed in.
+   ------------------------------------------------------------------------ */
+.ams-topbar{position:sticky;top:0;z-index:30;display:flex;min-height:60px;align-items:center;justify-content:space-between;gap:16px;padding:10px 26px;
+  border-bottom:1px solid var(--ams-line-soft);background:var(--ams-bg)}
+.ams-top-start{display:flex;min-width:0;align-items:center;gap:12px;overflow:hidden}
+.ams-top-mark{display:none;--brand-h:30px}
+.ams-page-title{overflow:hidden;margin:0;color:var(--ams-head);font-family:${SANS};font-size:18px;font-weight:600;line-height:1.2;letter-spacing:-.01em;text-overflow:ellipsis;white-space:nowrap}
+.ams-save{display:inline-flex;flex-shrink:0;align-items:center;gap:7px;min-height:26px;padding:0 10px;border:1px solid var(--ams-line-soft);border-radius:999px;
+  background:var(--ams-surface);color:var(--ams-mute);font-size:11.5px;font-weight:500;white-space:nowrap}
+.ams-save-dot{width:7px;height:7px;flex-shrink:0;border-radius:50%;background:var(--ams-ok)}
+.ams-save[data-state="busy"] .ams-save-dot{background:var(--ams-warn);animation:ams-blink 1s ease-in-out infinite}
+.ams-save[data-state="error"]{border-color:var(--ams-alarm);color:var(--ams-alarm)}
+.ams-save[data-state="error"] .ams-save-dot{background:var(--ams-alarm)}
+@keyframes ams-blink{50%{opacity:.35}}
 .ams-top-actions{display:flex;align-items:center;justify-content:flex-end;gap:9px}
 /* The company whose mark the workspace wears, ahead of everything else in the
    bar - which puts it beside the filter on the register and beside the refresh
@@ -2303,48 +2416,47 @@ const CHROME_CSS = `
   height:34px;width:auto;max-width:140px;flex-shrink:0;object-fit:contain;
   padding:4px 7px;border-radius:8px;background:#fff;border:1px solid var(--ams-line);
 }
-
-/* The bar is the dark frame, so the filter is dressed as chrome rather than as
-   a form field; color-scheme keeps the native option list dark with it. */
 .ams-topbar .ams-top-select{
-  min-width:0;max-width:190px;min-height:34px;padding:0 9px;border:1px solid #fff;border-radius:8px;
-  background:var(--ams-surface);color:#fff;color-scheme:dark;font-family:${SANS};font-size:12.5px;font-weight:600;
+  min-width:0;max-width:190px;min-height:36px;padding:0 9px;border:1px solid var(--ams-line);border-radius:9px;
+  background:var(--ams-surface);color:var(--ams-text);color-scheme:dark;font-family:${SANS};font-size:12.5px;font-weight:500;
   line-height:1;cursor:pointer;transition:border-color 180ms ease,color 180ms ease;
 }
-.ams-topbar .ams-top-select:hover{border-color:#ff4d4a}
-.ams-topbar .ams-top-select:focus-visible{outline:2px solid #e8120f;outline-offset:2px}
-.ams-topbar .ams-top-select[data-set="1"]{border-color:#ff4d4a;color:#fff}
-.ams-ctl{display:inline-flex;min-height:34px;align-items:center;gap:7px;padding:0 11px;border:1px solid #fff;border-radius:8px;background:var(--ams-surface);color:#fff;font-family:${SANS};font-size:12.5px;font-weight:600;line-height:1;white-space:nowrap;cursor:pointer;transition:background 180ms ease,border-color 180ms ease,color 180ms ease}
-.ams-ctl:hover:not(:disabled){border-color:#ff4d4a;background:var(--ams-surface-2);color:#fff}
+.ams-topbar .ams-top-select:hover{border-color:var(--ams-sand-deep)}
+.ams-topbar .ams-top-select:focus-visible{outline:2px solid var(--ams-sand);outline-offset:2px}
+.ams-topbar .ams-top-select[data-set="1"]{border-color:var(--ams-sand);color:var(--ams-head)}
+.ams-ctl{display:inline-flex;min-height:36px;align-items:center;gap:7px;padding:0 12px;border:1px solid var(--ams-line);border-radius:9px;background:var(--ams-surface);color:var(--ams-text);
+  font-family:${SANS};font-size:12.5px;font-weight:500;line-height:1;white-space:nowrap;cursor:pointer;
+  transition:background 180ms ease,border-color 180ms ease,color 180ms ease,transform 180ms ease,box-shadow 180ms ease}
+.ams-ctl:hover:not(:disabled){border-color:var(--ams-sand-deep);background:var(--ams-surface-2)}
 .ams-ctl:disabled{opacity:.4;cursor:not-allowed}
-.ams-ctl[data-open="1"]{border-color:#e8120f;color:#fff}
-.ams-ctl[data-icon="1"]{padding:0 9px}
-.ams-ctl[data-primary="1"]{border-color:#ff4d4a;background:${PLATE_RED};color:#fff;font-weight:800;box-shadow:0 2px 0 #c4130f}
-.ams-ctl[data-primary="1"]:hover:not(:disabled){border-color:#ff7a77;background:${PLATE_RED_HOVER};color:#fff}
-.ams-ctl[data-primary="1"]:active:not(:disabled){transform:translateY(2px);box-shadow:0 1px 0 #c4130f}
-.ams-content{width:min(100%,1500px);margin:0 auto;padding:18px 26px 44px;font-family:${SANS};font-size:14px;line-height:1.45}
-.ams-label{margin:0 0 6px;color:${C.dim};font-family:${SANS};font-size:11px;font-weight:800;letter-spacing:.09em;line-height:1.2;text-transform:uppercase}
-.ams-section-title{color:var(--ams-head);font-family:${DISPLAY};font-size:16px;font-weight:700;letter-spacing:-.015em;line-height:1.25}
+.ams-ctl[data-open="1"]{border-color:var(--ams-sand)}
+.ams-ctl[data-icon="1"]{padding:0 10px}
+.ams-ctl[data-primary="1"]{border-color:var(--ams-sand);background:var(--ams-sand);color:var(--ams-on-sand);font-weight:600}
+.ams-ctl[data-primary="1"]:hover:not(:disabled){border-color:var(--ams-sand-hi);background:var(--ams-sand-hi);transform:translateY(-1px);box-shadow:0 6px 16px rgba(0,0,0,.28)}
+.ams-ctl[data-primary="1"]:active:not(:disabled){transform:none;box-shadow:none}
+/* who is signed in, and the way out */
+.ams-who{display:flex;min-width:0;align-items:center;gap:9px;margin-left:3px;padding-left:12px;border-left:1px solid var(--ams-line-soft)}
+.ams-avatar{display:grid;width:32px;height:32px;flex-shrink:0;place-items:center;border-radius:50%;background:var(--ams-sand)}
+/* every user gets the same default profile figure; the art is a black
+   silhouette, so it masks the dark ink on the sand disc */
+.ams-avatar-icon{display:block;width:19px;height:19px;background:var(--ams-on-sand);-webkit-mask:url("/icon/Default%20Prof.png") center/contain no-repeat;mask:url("/icon/Default%20Prof.png") center/contain no-repeat}
+.ams-who-text{display:flex;min-width:0;flex-direction:column;line-height:1.25}
+.ams-who-name{overflow:hidden;max-width:170px;color:var(--ams-head);font-size:12.5px;font-weight:600;text-overflow:ellipsis;white-space:nowrap}
+.ams-who-role{display:flex;align-items:center;gap:5px;overflow:hidden;max-width:170px;color:var(--ams-dim);font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+.ams-access-icon{display:block;width:15px;height:15px;flex-shrink:0;object-fit:contain}
+.ams-access-icon--normal{background:currentColor;-webkit-mask:url("/icon/Normal%20Access.png") center/contain no-repeat;mask:url("/icon/Normal%20Access.png") center/contain no-repeat}
+.ams-signout{display:grid;width:34px;height:34px;flex-shrink:0;place-items:center;border:1px solid var(--ams-line);border-radius:9px;background:var(--ams-surface);color:var(--ams-mute);cursor:pointer;
+  transition:background 170ms ease,border-color 170ms ease,color 170ms ease}
+.ams-signout-icon{display:block;width:16px;height:16px;background:currentColor;-webkit-mask:url("/icon/logout.png") center/contain no-repeat;mask:url("/icon/logout.png") center/contain no-repeat}
+.ams-signout:hover{border-color:var(--ams-red);background:var(--ams-red);color:#fff}
+.ams-content{width:min(100%,1500px);margin:0 auto;padding:18px 26px 44px;font-family:${SANS};font-size:13.5px;line-height:1.5}
+.ams-label{margin:0 0 6px;color:${C.dim};font-family:${SANS};font-size:10.5px;font-weight:600;letter-spacing:.08em;line-height:1.2;text-transform:uppercase}
+.ams-section-title{color:var(--ams-head);font-family:${DISPLAY};font-size:15.5px;font-weight:600;letter-spacing:-.01em;line-height:1.3}
 .ams-shell input,.ams-shell select,.ams-shell textarea{background:var(--ams-well);color:${C.ink};transition:border-color 180ms ease,box-shadow 180ms ease}
-.ams-shell input:focus,.ams-shell select:focus,.ams-shell textarea:focus{border-color:var(--ams-yellow)!important;box-shadow:0 0 0 3px rgba(255,205,17,.25)}
+.ams-shell input:focus,.ams-shell select:focus,.ams-shell textarea:focus{border-color:var(--ams-sand)!important;box-shadow:0 0 0 3px rgba(215,189,137,.28)}
 .ams-pop{z-index:60;padding:5px 0;border:1px solid var(--ams-line);border-radius:9px;background:var(--ams-surface-2);box-shadow:0 18px 55px rgba(0,0,0,.65);animation:ams-pop 140ms ease-out}
 @keyframes ams-pop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 .ams-cart-tick{color:var(--ams-ok);animation:ams-tick-pop 340ms cubic-bezier(.22,1.35,.4,1)}
-/* The detail panel keeps station beside the list instead of sitting at the top
-   of it. With two hundred assets on the register, scrolling to one near the
-   bottom and clicking it used to fill a panel a screen and a half above where
-   the user was looking, so the click appeared to do nothing. It sticks below
-   the topbar, and scrolls inside itself when the asset it is showing is taller
-   than what is left of the screen.
-
-   Below the md breakpoint there is no second column - selecting an asset
-   replaces the list - so there it goes back to scrolling with the page. */
-.ams-detail{position:sticky;top:74px;max-height:calc(100vh - 90px);overflow-y:auto;overscroll-behavior:contain;
- scrollbar-width:thin;scrollbar-color:var(--ams-line) transparent}
-.ams-detail::-webkit-scrollbar{width:8px}
-.ams-detail::-webkit-scrollbar-track{background:transparent}
-.ams-detail::-webkit-scrollbar-thumb{background:var(--ams-line);border-radius:20px}
-@media (max-width:767px){.ams-detail{position:static;max-height:none;overflow:visible}}
 .ams-strip{scrollbar-width:thin;scrollbar-color:var(--ams-line) transparent}
 .ams-strip::-webkit-scrollbar{height:8px}
 .ams-strip::-webkit-scrollbar-track{background:transparent}
@@ -2353,8 +2465,7 @@ const CHROME_CSS = `
 .ams-item{display:flex;width:100%;align-items:flex-start;gap:10px;padding:9px 12px;border:0;background:transparent;color:${C.ink};font-family:${SANS};font-size:13.5px;text-align:left;cursor:pointer}
 .ams-item:hover:not(:disabled){background:var(--ams-surface);color:var(--ams-head)}
 .ams-item:disabled{opacity:.4;cursor:not-allowed}
-.ams-backdrop{display:none}
-.ams-shell button:focus-visible{outline:2px solid var(--ams-yellow);outline-offset:2px}
+.ams-shell button:focus-visible{outline:2px solid var(--ams-sand);outline-offset:2px}
 .ams-spin{animation:ams-rot .9s linear infinite}
 @keyframes ams-rot{to{transform:rotate(360deg)}}
 /* KPI tiles: compact, and cut like the sign-in card - the top-left and
@@ -2428,30 +2539,225 @@ const CHROME_CSS = `
 .ams-data-head>div{color:${C.dim}!important;font-family:${SANS}!important;font-size:11px!important;font-weight:800;letter-spacing:.075em!important}
 .ams-list-row{transition:background 160ms ease,border-color 160ms ease}
 .ams-list-row:hover{background:var(--ams-surface-2)!important}
-@media (max-width:830px){
-  .ams-main{margin-left:0}
-  .ams-sidebar{width:min(286px,86vw);transform:translateX(-102%);box-shadow:18px 0 55px rgba(0,0,0,.7)}
-  .ams-sidebar[data-open="1"]{transform:translateX(0)}
-  .ams-side-close{display:grid;place-items:center}
-  .ams-backdrop{position:fixed;inset:0;z-index:45;display:block;border:0;background:rgba(0,0,0,.66);backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:opacity 220ms ease}
-  .ams-backdrop[data-open="1"]{opacity:1;pointer-events:auto}
-  .ams-menu{display:grid}
-  .ams-rail-toggle{display:none}
-  .ams-topbar{min-height:56px;padding:8px 16px}
-  .ams-content{padding:16px 16px 36px}
+/* ------------------------------------------------------------------------
+   Buttons. Sand is the primary action and nothing else; the ghost button
+   is a card-coloured control that warms toward sand on hover.
+   ------------------------------------------------------------------------ */
+.ams-btn{display:inline-flex;min-height:40px;align-items:center;gap:8px;padding:0 13px;border:1px solid var(--ams-line);border-radius:10px;background:var(--ams-surface);color:var(--ams-text);
+  font-family:${SANS};font-size:13px;font-weight:500;white-space:nowrap;cursor:pointer;
+  transition:background 160ms ease,border-color 160ms ease,color 160ms ease,transform 160ms ease,box-shadow 160ms ease}
+.ams-btn[data-small="1"]{min-height:34px;padding:0 10px;font-size:12.5px}
+.ams-btn:hover:not(:disabled){border-color:var(--ams-sand-deep);background:var(--ams-surface-2)}
+.ams-btn[data-kind="solid"]{border-color:var(--ams-sand);background:var(--ams-sand);color:var(--ams-on-sand);font-weight:600}
+.ams-btn[data-kind="solid"]:hover:not(:disabled){border-color:var(--ams-sand-hi);background:var(--ams-sand-hi);transform:translateY(-1px);box-shadow:0 6px 16px rgba(0,0,0,.28)}
+.ams-btn[data-kind="solid"]:active:not(:disabled){transform:none;box-shadow:none}
+.ams-btn[data-kind="danger"]{color:var(--ams-alarm)}
+.ams-btn[data-kind="danger"]:hover:not(:disabled){border-color:var(--ams-alarm);background:var(--ams-alarm-tint)}
+.ams-btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* ------------------------------------------------------------------------
+   Dialogs open with a short animation: the backdrop fades in and the panel
+   rises into place, so a click visibly produces the window it asked for.
+   Every dialog in the product shares the one backdrop class, so they all
+   move alike, and Escape still closes only the top-most one.
+   ------------------------------------------------------------------------ */
+.ams-scrim{background:rgba(22,26,25,.66);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);animation:ams-fade 200ms ease-out both}
+.ams-scrim>*{animation:ams-rise 280ms cubic-bezier(.2,.8,.25,1) both}
+/* Rounded panels. One that does not scroll as a whole clips its own header
+   and footer to the corners; one that does is already clipped by scrolling. */
+.ams-scrim [role="dialog"],.ams-scrim [role="alertdialog"]{border-radius:14px!important;box-shadow:0 24px 70px rgba(0,0,0,.5)}
+.ams-scrim [role="dialog"]:not(.overflow-y-auto):not(.overflow-auto){overflow:hidden}
+@media (max-width:639px){.ams-scrim.items-end>*>[role="dialog"],.ams-scrim.items-end>[role="dialog"]{border-bottom-left-radius:0!important;border-bottom-right-radius:0!important}}
+@keyframes ams-fade{from{opacity:0}to{opacity:1}}
+@keyframes ams-rise{from{opacity:0;transform:translateY(16px) scale(.97)}to{opacity:1;transform:none}}
+/* a record opened beside the list slides in from the right, as a drawer does */
+.ams-slide-in{animation:ams-slide 300ms cubic-bezier(.2,.8,.25,1) both}
+@keyframes ams-slide{from{opacity:0;transform:translateX(26px)}to{opacity:1;transform:none}}
+
+/* Record numbers on a light plate with a red left stripe. */
+.ams-tag{display:inline-flex;flex-shrink:0;max-width:100%;align-items:center;padding:0 7px;border-left:4px solid var(--ams-red);border-radius:3px;
+  background:var(--ams-plate);color:var(--ams-on-plate);font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:.03em;line-height:21px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ams-tag[data-big="1"]{padding:4px 12px 4px 10px;border-left-width:5px;border-radius:6px;font-size:22px;letter-spacing:.05em;line-height:1.2}
+
+/* ------------------------------------------------------------------------
+   The asset form (.ams-modal, .ams-form-*) and the asset record drawer
+   (.ams-drawer, .ams-sticker, .ams-tabs, .ams-dl, .ams-log), after the
+   reference build's ui-base.
+   ------------------------------------------------------------------------ */
+.ams-icon-btn{display:grid;width:32px;height:32px;flex-shrink:0;place-items:center;border:0;border-radius:8px;background:transparent;color:var(--ams-mute);cursor:pointer;transition:background 160ms ease,color 160ms ease}
+.ams-icon-btn:hover:not(:disabled){background:var(--ams-surface-2);color:var(--ams-head)}
+.ams-icon-btn:disabled{opacity:.4;cursor:not-allowed}
+
+.ams-modal{display:flex;width:100%;max-height:92vh;flex-direction:column;border:1px solid var(--ams-line);border-radius:14px;background:var(--ams-surface);outline:none}
+.ams-modal-head{display:flex;flex-shrink:0;align-items:center;justify-content:space-between;gap:12px;padding:16px 22px;border-bottom:1px solid var(--ams-line-soft)}
+.ams-modal-title{color:var(--ams-head);font-size:17px;font-weight:600}
+.ams-modal-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 22px 22px}
+.ams-modal-foot{display:flex;flex-shrink:0;flex-wrap:wrap;align-items:center;gap:10px;padding:14px 22px;border-top:1px solid var(--ams-line-soft);background:var(--ams-surface-2)}
+/* each section opens with a sand heading under a thin rule */
+.ams-form-section{margin-top:20px;padding-top:16px;border-top:1px solid var(--ams-line)}
+.ams-form-section:first-child{margin-top:0;padding-top:18px;border-top:0}
+.ams-form-section-title{color:var(--ams-sand);font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.ams-form-section-note{margin-top:3px;color:var(--ams-mute);font-size:12.5px;line-height:1.45}
+.ams-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 18px;margin-top:12px}
+.ams-field{min-width:0}
+.ams-field[data-full="1"]{grid-column:1/-1}
+.ams-field>label{display:block;margin-bottom:6px;color:var(--ams-dim);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.ams-req{color:var(--ams-alarm)}
+.ams-input{display:block;width:100%;min-height:42px;padding:9px 11px;border:1px solid var(--ams-line);border-radius:10px;background:var(--ams-well);color:var(--ams-text);font-family:${SANS};font-size:13.5px;outline:none}
+textarea.ams-input{resize:vertical;line-height:1.5}
+/* read-only: a dashed outline and no fill, so it reads as given rather than asked */
+.ams-input[data-locked="1"]{border-style:dashed;background:transparent;color:var(--ams-mute);cursor:not-allowed;opacity:1}
+.ams-input[aria-invalid="true"]{border-color:var(--ams-alarm);background:var(--ams-alarm-tint)}
+.ams-field-hint{margin-top:5px;color:var(--ams-mute);font-size:11.5px;line-height:1.4}
+.ams-field-error{margin-top:5px;color:var(--ams-alarm);font-size:11.5px;font-weight:500;line-height:1.4}
+.ams-form-msg{flex:1 1 200px;color:var(--ams-alarm);font-size:12.5px;font-weight:500;line-height:1.4}
+.ams-form-msg:empty{display:none}
+.ams-modal-actions{display:flex;gap:10px;margin-left:auto}
+
+/* the drawer: a fixed header in the panel colour over a body in the page colour */
+.ams-drawer-scrim{position:fixed;inset:0;z-index:50;background:rgba(22,26,25,.62);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);animation:ams-fade 200ms ease-out both}
+.ams-drawer{position:fixed;top:0;right:0;bottom:0;z-index:50;display:flex;width:min(900px,100vw);flex-direction:column;border-left:1px solid var(--ams-line);
+  background:var(--ams-bg);box-shadow:-24px 0 60px rgba(0,0,0,.45);outline:none;animation:ams-drawer-in 320ms cubic-bezier(.2,.8,.25,1) both}
+@keyframes ams-drawer-in{from{transform:translateX(100%)}to{transform:none}}
+.ams-drawer-head{flex-shrink:0;padding:12px 24px 0;border-bottom:1px solid var(--ams-line);background:var(--ams-surface)}
+.ams-drawer-top{display:flex;align-items:center;justify-content:space-between;color:var(--ams-dim);font-size:12px;font-weight:500}
+.ams-sticker{display:flex;margin-top:8px;overflow:hidden;border-left:10px solid var(--ams-red);border-radius:10px;background:var(--ams-plate);color:var(--ams-on-plate);box-shadow:0 8px 22px rgba(0,0,0,.28)}
+.ams-sticker-main{flex:1;min-width:0;padding:14px 18px 15px}
+.ams-sticker-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.ams-sticker-no{font-family:${MONO};font-size:26px;font-weight:700;letter-spacing:.1em;line-height:1.1}
+.ams-sticker-status{display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;background:var(--c);color:#1b201f;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+.ams-sticker-name{margin-top:6px;font-size:16px;font-weight:600;line-height:1.3;overflow-wrap:anywhere}
+.ams-sticker-meta{margin-top:2px;color:#5b6462;font-size:12.5px}
+.ams-sticker-qr{display:flex;width:132px;flex-shrink:0;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:12px;border-left:1px dashed rgba(45,51,50,.4);
+  color:#5b6462;font-size:11px;font-weight:600;text-align:center;overflow-wrap:anywhere}
+.ams-sticker-qr img{display:block;border-radius:3px;background:#fff}
+.ams-drawer-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:14px}
+.ams-link-danger{display:inline-flex;align-items:center;gap:6px;margin-left:auto;padding:6px 2px;border:0;background:transparent;color:var(--ams-alarm);font-size:12.5px;font-weight:600;cursor:pointer}
+.ams-link-danger:hover{text-decoration:underline}
+.ams-tabs{display:flex;gap:2px;margin-top:12px;overflow-x:auto;scrollbar-width:none}
+.ams-tabs::-webkit-scrollbar{display:none}
+.ams-tab{position:relative;display:inline-flex;align-items:center;gap:7px;padding:10px 12px 12px;border:0;background:transparent;color:var(--ams-mute);font-size:13px;font-weight:500;white-space:nowrap;cursor:pointer;transition:color 160ms ease}
+.ams-tab:hover{color:var(--ams-text)}
+.ams-tab:after{position:absolute;right:10px;bottom:0;left:10px;height:3px;border-radius:3px 3px 0 0;background:var(--ams-sand);content:"";transform:scaleX(0);transition:transform 200ms ease}
+.ams-tab[aria-selected="true"]{color:var(--ams-head);font-weight:600}
+.ams-tab[aria-selected="true"]:after{transform:scaleX(1)}
+.ams-tab-n{min-width:20px;padding:1px 6px;border-radius:999px;background:var(--ams-surface-2);color:var(--ams-mute);font-size:10.5px;font-weight:600;text-align:center}
+.ams-tab[aria-selected="true"] .ams-tab-n{background:var(--ams-sand-tint);color:var(--ams-sand)}
+.ams-drawer-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:18px 24px 32px}
+.ams-drawer-card{margin-bottom:14px;overflow:hidden;border:1px solid var(--ams-line-soft);border-radius:10px;background:var(--ams-surface)}
+/* details: small headings over two columns, 1px lines between the facts */
+.ams-dl-group+.ams-dl-group{margin-top:18px}
+.ams-dl-head{margin-bottom:8px;color:var(--ams-sand-ink);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.ams-dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;overflow:hidden;border:1px solid var(--ams-line-soft);border-radius:10px;background:var(--ams-line-soft)}
+.ams-dl-cell{min-width:0;padding:11px 16px 12px;background:var(--ams-surface)}
+.ams-dl-cell[data-span="1"]{grid-column:1/-1}
+.ams-dl-label{margin-bottom:4px;color:var(--ams-dim);font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase}
+.ams-dl-value{color:var(--ams-head);font-size:13.5px;overflow-wrap:anywhere}
+.ams-dl-empty{color:var(--ams-dim);font-size:13px;font-style:italic}
+/* history: the date in its own 104px column */
+.ams-log{overflow:hidden;border:1px solid var(--ams-line-soft);border-radius:10px;background:var(--ams-surface)}
+.ams-log-row{display:grid;grid-template-columns:104px minmax(0,1fr);gap:14px;padding:12px 16px;border-bottom:1px solid var(--ams-line-soft)}
+.ams-log-row:last-child{border-bottom:0}
+.ams-log-date{padding-top:1px;color:var(--ams-mute);font-family:${MONO};font-size:12px}
+.ams-log-text{display:flex;align-items:center;gap:8px;color:var(--ams-head);font-size:13.5px}
+.ams-log-sub{margin-top:2px;padding-left:15px;color:var(--ams-mute);font-size:12.5px}
+.ams-log-by{margin-top:3px;padding-left:15px;color:var(--ams-dim);font-size:11.5px}
+.ams-tab-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;color:var(--ams-mute);font-size:12.5px}
+.ams-tab-empty{padding:36px 16px;border:1px dashed var(--ams-line);border-radius:10px;color:var(--ams-mute);font-size:13px;text-align:center}
+.ams-from{margin-top:2px;color:var(--ams-dim);font-size:11.5px}
+.ams-current{margin-top:2px;color:var(--ams-ok);font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.ams-row-link{cursor:pointer}
+.ams-row-link:focus-visible{outline:2px solid var(--ams-sand);outline-offset:-2px}
+.ams-table tfoot td{padding:11px 12px!important;border-top:1px solid var(--ams-line);background:var(--ams-surface-2)}
+.ams-tfoot-label{color:var(--ams-mute);font-weight:600}
+@media (max-width:640px){
+  .ams-form-grid,.ams-dl{grid-template-columns:1fr}
+  .ams-modal{max-height:94vh}
+  .ams-modal-head,.ams-modal-foot{padding-inline:16px}
+  .ams-modal-body{padding:0 16px 18px}
+  .ams-drawer-head{padding:10px 14px 0}
+  .ams-drawer-body{padding:14px 14px 28px}
+  .ams-sticker-main{padding:12px 14px}
+  .ams-sticker-no{font-size:21px}
+  .ams-sticker-qr{width:96px;padding:10px 8px}
+  .ams-log-row{grid-template-columns:86px minmax(0,1fr);gap:10px;padding:11px 12px}
 }
+
+/* The asset list as a table, after the reference build's .panel/.tbl/.chip. */
+.ams-panel{min-width:0;overflow:hidden;border:1px solid var(--ams-line-soft);border-radius:10px;background:var(--ams-surface)}
+.ams-tblwrap{overflow-x:auto}
+/* wide enough that a narrow screen scrolls the table sideways rather than
+   squeezing every column into a tall stack of wrapped words */
+.ams-tbl{width:100%;min-width:960px;border-collapse:collapse;font-size:13px}
+.ams-tbl th{padding:10px 12px;border-bottom:1px solid var(--ams-line-soft);background:var(--ams-well);color:var(--ams-dim);font-size:12px;font-weight:500;text-align:left;white-space:nowrap}
+.ams-tbl td{padding:10px 12px;border-bottom:1px solid var(--ams-line-soft);color:var(--ams-text);vertical-align:top}
+.ams-tbl tbody tr:last-child td{border-bottom:0}
+.ams-tbl-click{cursor:pointer}
+.ams-tbl-click:hover td{background:var(--ams-surface-2)}
+.ams-tbl-click:focus-visible{outline:2px solid var(--ams-sand);outline-offset:-2px}
+.ams-tbl-strong{font-weight:600}
+.ams-tbl-sub{display:block;color:var(--ams-dim);font-size:12px}
+.ams-chip{--c:#999;display:inline-flex;align-items:center;gap:6px;padding:2px 10px 2px 8px;border-radius:999px;
+  background:color-mix(in srgb,var(--c) 20%,transparent);color:color-mix(in srgb,var(--c) 45%,#fff);font-size:12px;font-weight:500;line-height:18px;white-space:nowrap}
+.ams-chip-dot{width:8px;height:8px;flex-shrink:0;border-radius:50%;background:var(--c)}
+.ams-due{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;white-space:nowrap}
+.ams-empty{display:flex;flex-direction:column;align-items:center;gap:12px;padding:48px 20px;text-align:center}
+.ams-empty-title{color:var(--ams-head);font-size:14px;font-weight:500}
+.ams-empty-sub{color:var(--ams-mute);font-size:13px}
+
+/* Toasts: bottom right, a light plate with a sand edge, or red for errors. */
+.ams-toasts{position:fixed;right:20px;bottom:20px;z-index:50;display:flex;width:min(400px,calc(100vw - 28px));flex-direction:column;gap:10px}
+.ams-toast{display:flex;align-items:flex-start;gap:10px;padding:12px 10px 12px 14px;border-left:4px solid var(--ams-sand-deep);border-radius:10px;
+  background:var(--ams-plate);color:var(--ams-on-plate);font-size:13px;font-weight:500;line-height:1.45;box-shadow:0 16px 44px rgba(0,0,0,.42);
+  animation:ams-toast 280ms cubic-bezier(.2,.8,.25,1) both}
+.ams-toast[data-tone="error"]{border-left-color:var(--ams-red-deep);background:var(--ams-red);color:#fff}
+.ams-toast-x{display:grid;width:24px;height:24px;flex-shrink:0;place-items:center;margin:-2px 0 0 4px;border:0;border-radius:6px;background:transparent;color:inherit;opacity:.7;cursor:pointer}
+.ams-toast-x:hover{opacity:1;background:rgba(0,0,0,.08)}
+@keyframes ams-toast{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+
+/* The bar gives up words before it gives up controls. */
+@media (max-width:1180px){.ams-who-text{display:none}}
+@media (max-width:980px){.ams-save-text{display:none}.ams-save{padding:0 8px}}
+
+/* ------------------------------------------------------------------------
+   Under 820px the rail becomes a bar along the bottom of the screen. It
+   scrolls sideways when the modules outnumber the width, and the red bar
+   moves to the top edge of the open module.
+   ------------------------------------------------------------------------ */
+@media (max-width:819px){
+  .ams-shell{--rail:0px}
+  .ams-main{padding-bottom:calc(66px + env(safe-area-inset-bottom))}
+  .ams-sidebar{inset:auto 0 0 0;width:auto;height:calc(66px + env(safe-area-inset-bottom));flex-direction:row;overflow-x:auto;overflow-y:hidden;
+    padding-bottom:env(safe-area-inset-bottom);border-top:1px solid var(--ams-line-soft);border-right:0;box-shadow:0 -10px 30px rgba(0,0,0,.25)}
+  .ams-side-head,.ams-side-spacer{display:none}
+  .ams-nav{flex-direction:row;flex-shrink:0;gap:0;padding:0}
+  .ams-side-rule{width:1px;height:auto;margin:14px 2px}
+  .ams-nav-item{width:auto;min-width:74px;min-height:66px;padding:8px 6px}
+  .ams-nav-item:before{top:0;right:14px;bottom:auto;left:14px;width:auto;height:3px;border-radius:0 0 3px 3px;transform:scaleX(0)}
+  .ams-nav-item[aria-current="page"]:before{transform:scaleX(1)}
+  .ams-nav-label{white-space:nowrap}
+  .ams-top-mark{display:block}
+  .ams-topbar{min-height:56px;padding:8px 14px}
+  .ams-content{padding:16px 14px 30px}
+  .ams-toasts{right:14px;bottom:calc(78px + env(safe-area-inset-bottom))}
+}
+/* A phone has room for the controls or the words, not both: the bottom bar
+   already names the open module, so the title goes, the save state keeps its
+   dot, and the account keeps only its way out. */
 @media (max-width:580px){
-  .ams-page-title{font-size:18px}
-  .ams-breadcrumb{display:none}
-  .ams-top-actions{gap:7px}
-  .ams-topbar .ams-top-select{max-width:132px;font-size:12px}
+  .ams-page-title,.ams-save-text,.ams-who-text,.ams-avatar{display:none}
+  .ams-topbar{gap:10px}
+  .ams-save{min-height:22px;padding:0 7px}
+  .ams-who{margin-left:0;padding-left:7px}
+  .ams-top-actions{min-width:0;gap:6px}
+  .ams-topbar .ams-top-select{max-width:118px;font-size:12px}
   .ams-ctl{padding-inline:11px}
   .ams-stat{padding:12px 13px 11px 14px}
   .ams-metric{min-height:108px;padding:14px}
   .ams-stat-v{font-size:24px}
   .ams-metric-v{font-size:24px}
 }
-@media (prefers-reduced-motion:reduce){.ams-sidebar,.ams-main,.ams-backdrop,.ams-pop,.ams-spin,.ams-cart-tick,.ams-ctl,.ams-nav-item,.ams-stat,.ams-stat-icon,.ams-trend-tip,.ams-brand,.ams-brand-glaze:before,.ams-rail-toggle,.ams-rail-toggle svg,.ams-signout{animation:none;transition:none}}
+@media (prefers-reduced-motion:reduce){.ams-sidebar,.ams-main,.ams-pop,.ams-spin,.ams-cart-tick,.ams-ctl,.ams-btn,.ams-nav-item,.ams-nav-item:before,.ams-nav-icon svg,.ams-stat,.ams-stat-icon,.ams-trend-tip,.ams-brand,.ams-brand-glaze:before,.ams-signout,.ams-save-dot,.ams-scrim,.ams-scrim>*,.ams-slide-in,.ams-toast,.ams-drawer,.ams-drawer-scrim,.ams-tab:after,.ams-tab{animation:none;transition:none}}
 `;
 
 
@@ -2579,41 +2885,15 @@ function TileTrend({ points, noun }) {
 
 const OPERATIONAL_TABS = new Set(["assets", "cart", "transfers", "repairs", "parts", "maintenance", "map", "reports"]);
 
-function RegisterSidebar({ tabs, tab, onTab, identity, onSignOut, open, onClose, status, railCollapsed, onToggleRail }) {
+function RegisterSidebar({ tabs, tab, onTab }) {
   const nav = useRef(null);
   const operational = tabs.filter(([key]) => OPERATIONAL_TABS.has(key));
   const administration = tabs.filter(([key]) => !OPERATIONAL_TABS.has(key));
 
-  useEffect(() => {
-    if (!open) return undefined;
-    const previouslyFocused = document.activeElement;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const frame = requestAnimationFrame(() => nav.current?.querySelector('[aria-current="page"]')?.focus());
-    const onKeyDown = (event) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const focusable = [...(nav.current?.querySelectorAll("button:not(:disabled)") || [])];
-      if (!focusable.length) return;
-      const first = focusable[0], last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      cancelAnimationFrame(frame);
-      document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = previousOverflow;
-      previouslyFocused?.focus?.();
-    };
-  }, [open, onClose]);
-
+  /* The rail runs top to bottom on a desk and left to right along the bottom
+     of a phone, so both pairs of arrows step through it. */
   const onNavKey = (event) => {
-    const step = { ArrowDown: 1, ArrowUp: -1 }[event.key];
+    const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[event.key];
     const at = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
     if (step === undefined && at === null) return;
     event.preventDefault();
@@ -2628,90 +2908,63 @@ function RegisterSidebar({ tabs, tab, onTab, identity, onSignOut, open, onClose,
     return (
       <button key={key} type="button" id={`ams-nav-${key}`} className="ams-nav-item"
         aria-current={selected ? "page" : undefined} aria-controls="ams-panel" title={label}
-        onClick={() => { onTab(key); onClose(); }}>
-        <Icon size={18} strokeWidth={selected ? 2.2 : 1.9} />
-        <span>{label}</span>
-        {count !== null && (
-          <span className="ams-nav-count" data-active={selected ? "1" : undefined} data-quiet={count === 0 ? "1" : undefined}>
-            {metric(count)}
-          </span>
-        )}
+        onClick={() => onTab(key)}>
+        <span className="ams-nav-icon">
+          <Icon size={20} strokeWidth={selected ? 2.1 : 1.8} />
+          {count !== null && (
+            <span className="ams-nav-count" data-active={selected ? "1" : undefined} data-quiet={count === 0 ? "1" : undefined}>
+              {metric(count)}
+            </span>
+          )}
+        </span>
+        <span className="ams-nav-label">{label}</span>
       </button>
     );
   };
 
   return (
-    <>
-      <button type="button" className="ams-backdrop" data-open={open ? "1" : "0"}
-        tabIndex={open ? 0 : -1} aria-label="Close navigation" onClick={onClose} />
-      <aside id="ams-sidebar" ref={nav} className="ams-sidebar" data-open={open ? "1" : "0"} aria-label="Asset Management System navigation">
-        <div className="ams-side-head">
-          <div className="ams-brand">
-            <span className="ams-brand-art">
-              <img src="/ams-brand.png" alt="Asset Management System" width="1119" height="274" />
-              <span className="ams-brand-glaze" aria-hidden="true" />
-            </span>
-          </div>
-          <button type="button" className="ams-side-close" aria-label="Close navigation" onClick={onClose}><X size={18} /></button>
+    <aside id="ams-sidebar" ref={nav} className="ams-sidebar" aria-label="Asset Management System navigation">
+      <div className="ams-side-head">
+        <div className="ams-brand">
+          <span className="ams-brand-art">
+            <img src="/ams-brand.png" alt="Asset Management System" width="1119" height="274" />
+            <span className="ams-brand-glaze" aria-hidden="true" />
+          </span>
         </div>
+      </div>
 
-        {status && <div className="ams-side-status"><Dot color={status.color} size={7} />{status.text}</div>}
-        <div className="ams-side-label">Workspace</div>
-        <nav className="ams-nav" aria-label="Operational sections" onKeyDown={onNavKey}>
-          {operational.map(renderItem)}
-        </nav>
+      <nav className="ams-nav" aria-label="Operational sections" onKeyDown={onNavKey}>
+        {operational.map(renderItem)}
+      </nav>
 
-        {administration.length > 0 && (
-          <>
-            <div className="ams-side-label">Administration</div>
-            <nav className="ams-nav" aria-label="Administration sections" onKeyDown={onNavKey}>
-              {administration.map(renderItem)}
-            </nav>
-          </>
-        )}
-
-        <div className="ams-side-spacer" />
-        <div className="ams-profile">
-          <div className="ams-profile-row">
-            <div className="ams-avatar" aria-hidden="true"><span className="ams-avatar-icon" /></div>
-            <div className="min-w-0 flex-1">
-              <div className="ams-profile-name">{identity.name}</div>
-            </div>
-            <button type="button" className="ams-signout" onClick={onSignOut} title="Sign out" aria-label="Sign out">
-              <span className="ams-signout-icon" aria-hidden="true" />
-            </button>
-          </div>
-          <div className="ams-profile-role" title={`${identity.role}${identity.isSuperAdmin ? " · Full access" : ""}`}>
-            {identity.isSuperAdmin
-              ? <img className="ams-access-icon" src="/icon/Supper%20Admin%20Access.png" alt="" width="22" height="22" />
-              : <span className="ams-access-icon ams-access-icon--normal" aria-hidden="true" />}
-            <span className="ams-profile-role-text">{identity.role}{identity.isSuperAdmin ? " · Full access" : ""}</span>
-          </div>
-        </div>
-        <button type="button" className="ams-rail-toggle" onClick={onToggleRail}
-          aria-label={railCollapsed ? "Expand navigation" : "Collapse navigation"}
-          title={railCollapsed ? "Expand navigation" : "Collapse navigation"}
-          aria-controls="ams-sidebar" aria-expanded={!railCollapsed}>
-          <ChevronLeft size={16} strokeWidth={2.4} />
-          <span className="ams-rail-toggle-label">Collapse</span>
-        </button>
-      </aside>
-    </>
+      {administration.length > 0 && (
+        <>
+          <div className="ams-side-rule" aria-hidden="true" />
+          <nav className="ams-nav" aria-label="Administration sections" onKeyDown={onNavKey}>
+            {administration.map(renderItem)}
+          </nav>
+        </>
+      )}
+      <div className="ams-side-spacer" />
+    </aside>
   );
 }
 
-function RegisterTopbar({ tabs, tab, navOpen, onMenu, onRefresh, refreshing, busy, dataActions, primary, companyNames, company, onCompany, brand }) {
+function RegisterTopbar({ tabs, tab, onRefresh, refreshing, busy, dataActions, primary, companyNames, company, onCompany, brand, save, identity, onSignOut }) {
   const active = tabs.find(([key]) => key === tab);
+  const access = `${identity.role}${identity.isSuperAdmin ? " · Full access" : ""}`;
   return (
     <header className="ams-topbar">
       <div className="ams-top-start">
-        <button type="button" className="ams-menu" onClick={onMenu} aria-label="Open navigation"
-          aria-controls="ams-sidebar" aria-expanded={navOpen}>
-          <Menu size={19} />
-        </button>
-        {/* the page keeps its heading for assistive tech; the bar itself is
-            now just the controls */}
-        <h1 className="sr-only">{active?.[1] || "Asset register"}</h1>
+        {/* on a phone the rail is a bar along the bottom, so the badge moves up here */}
+        <div className="ams-brand ams-top-mark" aria-hidden="true">
+          <span className="ams-brand-art"><img src="/ams-brand.png" alt="" width="1119" height="274" /></span>
+        </div>
+        <h1 className="ams-page-title">{active?.[1] || "Asset register"}</h1>
+        <span className="ams-save" data-state={save.state} role="status" title={save.text}>
+          <span className="ams-save-dot" aria-hidden="true" />
+          <span className="ams-save-text">{save.text}</span>
+        </span>
       </div>
 
       <div className="ams-top-actions">
@@ -2758,6 +3011,22 @@ function RegisterTopbar({ tabs, tab, navOpen, onMenu, onRefresh, refreshing, bus
             {primary.img ? <ImgIcon src={primary.img} size={15} /> : <primary.icon size={15} strokeWidth={2} />}<span className="hidden sm:inline">{primary.label}</span>
           </button>
         )}
+
+        <div className="ams-who" title={`${identity.name} · ${access}`}>
+          <div className="ams-avatar" aria-hidden="true"><span className="ams-avatar-icon" /></div>
+          <div className="ams-who-text">
+            <span className="ams-who-name">{identity.name}</span>
+            <span className="ams-who-role">
+              {identity.isSuperAdmin
+                ? <img className="ams-access-icon" src="/icon/Supper%20Admin%20Access.png" alt="" width="15" height="15" />
+                : <span className="ams-access-icon ams-access-icon--normal" aria-hidden="true" />}
+              {access}
+            </span>
+          </div>
+          <button type="button" className="ams-signout" onClick={onSignOut} title="Sign out" aria-label="Sign out">
+            <span className="ams-signout-icon" aria-hidden="true" />
+          </button>
+        </div>
       </div>
     </header>
   );
@@ -2802,11 +3071,6 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
      printed sheet. It is known before the first render, so the tab and the open
      movement start from it rather than being set once the effects have run. */
   const [tab, setTab] = useState(() => (readQuery("transfer") ? "transfers" : "assets"));
-  const [navOpen, setNavOpen] = useState(false);
-  /* A rail someone narrowed should still be narrow tomorrow. */
-  const [railCollapsed, setRailCollapsed] = useState(() => {
-    try { return localStorage.getItem("ams.rail") === "narrow"; } catch { return false; }
-  });
   const [sel, setSel] = useState(null);
   const [job, setJob] = useState(null);
   const [q, setQ] = useState("");
@@ -2841,15 +3105,10 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
   const [viewer, setViewer] = useState(null);
   /* the asset's paperwork, opened at the one that was clicked */
   const [gallery, setGallery] = useState(null);
-  /* The detail panel scrolls inside itself, so opening a second asset would
-     otherwise begin wherever the first one was left - halfway down somebody
-     else's custody trail. Each selection starts at the top of its own panel. */
-  const detail = useRef(null);
   const [assetImport, setAssetImport] = useState(false);
   const [notice, setNotice] = useState("");
   const [legacyBrowserData, setLegacyBrowserData] = useState(null);
   const fileRef = useRef(null);
-  const closeNav = useCallback(() => setNavOpen(false), []);
 
   const permissionSet = useMemo(() => new Set(access?.permissions || []), [access]);
   const isSuperAdmin = access?.is_super_admin === true;
@@ -2964,7 +3223,6 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
     }
   };
 
-  useEffect(() => { detail.current?.scrollTo({ top: 0 }); }, [sel]);
 
   const openJob = useCallback(
     (assetId) => allowedRepairs.find((r) => r.assetId === assetId && !r.closed) || null,
@@ -3048,6 +3306,11 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
       }),
       unique: Object.fromEntries(UNIQUE_FIELDS.map(({ key }) => [
         key, Object.fromEntries(allowedAssets.filter((a) => normKey(a[key])).map((a) => [normKey(a[key]), a.tag])),
+      ])),
+      /* the same, keyed without case or spaces and naming the asset, for the
+         asset form's as-you-type check */
+      idOwners: Object.fromEntries(UNIQUE_FIELDS.map(({ key }) => [
+        key, Object.fromEntries(allowedAssets.filter((a) => idKey(a[key])).map((a) => [idKey(a[key]), { id: a.id, tag: a.tag, name: a.name }])),
       ])),
       nextTag: issuedTag || `AST-${formatSequenceNumber(Math.max(n.length ? Math.max(...n) + 1 : 1, numbering?.asset?.start || 1), numbering?.asset)}`,
       tagIsIssued: !!issuedTag,
@@ -3227,13 +3490,12 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
     return c;
   }, [scoped, bucketOf]);
 
-  /* Newest registration first. Somebody who has just added a machine expects to
-     see it without scrolling, and the oldest end of the register is the part
-     nobody is looking for. Sorting by tag as text put AST-10 before AST-2, so
-     the number is read as a number where a timestamp is missing. */
+  /* In asset-number order, as in the reference build, so a newly saved asset
+     takes its place in the sequence. The number is read as a number - sorting
+     the tag as text put AST-10 before AST-2. */
   const shown = useMemo(() => scoped
     .filter((a) => filter === "all" || bucketOf(a) === filter)
-    .sort((a, b) => String(b.created || "").localeCompare(String(a.created || "")) || assetSeq(b) - assetSeq(a)),
+    .sort((a, b) => assetSeq(a) - assetSeq(b) || String(a.tag).localeCompare(String(b.tag))),
   [scoped, filter, bucketOf]);
 
   /* A scanner types the sticker code in one burst; an exact match opens it. */
@@ -3256,7 +3518,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
   const categoryIdFor = (name) => categories.find((item) => normKey(item.name) === normKey(name))?.id || null;
   const projectIdFor = (code) => projects.find((item) => normKey(item.pid) === normKey(code))?.id || null;
 
-  const runAsset = async (name, vals) => {
+  const runAsset = async (name, vals, meta = {}) => {
     const permission = name === "register" ? "asset.create" : ["transfer", "transferCart"].includes(name) ? "asset.transfer" : ["retire", "reinstate"].includes(name) ? "asset.retire" : "asset.update";
     if (!requirePermission(permission, ASSET_ACTIONS[name].title.toLowerCase())) return;
     try {
@@ -3294,7 +3556,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
           for (const shot of shots) if (shot.path) await deleteAssetPhoto(shot.path).catch(() => {});
           throw error;
         }
-        setNotice(result?.asset_number ? `Asset ${result.asset_number} registered.` : "Asset registered in Supabase.");
+        setNotice(result?.asset_number ? `${result.asset_number} registered` : "Asset registered");
       }
       else if (name === "edit") {
         const shots = await uploadImages(scoped.photos);
@@ -3308,7 +3570,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
             ...await settleFiles(current.id, scoped.files, current.files || []),
           ];
           return saved;
-        }, "Asset updated.");
+        }, meta.changed?.length ? `${scoped.tag || current.tag} saved: ${meta.changed.join(", ")} changed` : "Asset updated.");
       }
       else if (name === "transfer") await runServerMutation(() => transferAsset(current, scoped), "Transfer recorded.");
       else if (name === "transferCart") {
@@ -3689,8 +3951,6 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
 
   if (loading) return <div className="min-h-screen flex items-center justify-center" style={{ background: C.paper, fontFamily: MONO, fontSize: 12, letterSpacing: "0.15em", color: C.mute }}>LOADING FROM SUPABASE…</div>;
 
-  const av = current ? availOf(current, openJob(current.id)) : null;
-  const curJobOfAsset = current ? openJob(current.id) : null;
   const partOf = (d) => {
     const j = repairs.find((r) => r.id === d.jobId);
     return (j?.parts || []).find((p) => p.id === d.partId) || {};
@@ -3783,15 +4043,46 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
     role: access?.role_name || "Team member",
     isSuperAdmin,
   };
-  const syncStatus = saving ? { color: C.due, text: "Saving to Supabase…" }
-    : refreshing ? { color: C.due, text: "Refreshing workspace…" }
-      : null;
-  const toggleRail = () => setRailCollapsed((was) => {
-    const next = !was;
-    try { localStorage.setItem("ams.rail", next ? "narrow" : "wide"); } catch { /* private mode - the choice just does not survive */ }
-    return next;
-  });
-  const selectTab = (key) => { setTab(key); setJob(null); };
+  /* Every change is written to Supabase as it is made, so the bar only has to
+     say whether the last one is still on its way, failed, or arrived. */
+  const saveState = saving ? { state: "busy", text: "Saving…" }
+    : refreshing ? { state: "busy", text: "Refreshing…" }
+      : saveErr ? { state: "error", text: "Not saved" }
+        : { state: "ok", text: "Saved" };
+  /* a record drawer belongs to the Assets page, so leaving the page closes it */
+  const selectTab = (key) => { setTab(key); setJob(null); setSel(null); };
+  /* what the buttons in the asset record ask for */
+  const assetAction = (name, arg) => {
+    if (!current) return;
+    if (name === "transfer") setDlg({ kind: "asset", name: "transfer" });
+    else if (name === "cart") askAddToCart(current);
+    else if (name === "fault") setDlg({ kind: "repair", name: "open", assetId: current.id });
+    else if (name === "retire") setDlg({ kind: "asset", name: "retire" });
+    else if (name === "edit") setDlg({ kind: "asset", name: "edit" });
+    else if (name === "reinstate") setDlg({ kind: "asset", name: "reinstate" });
+    else if (name === "ticket") { setTab("repairs"); setJob(arg); }
+    else if (name === "schedule") setMaintenanceChoice({ lockedAssetTag: `${current.tag} — ${current.name}` });
+    else if (name === "logPlan") setDlg({ kind: "plan", name: "logPlan", planId: arg });
+    else if (name === "forms") setFormsFor(current);
+    else if (name === "images") {
+      const shots = current.images?.length ? current.images : [{ id: "cover", url: current.photoUrl }];
+      setGallery({ items: imageItems(shots, current), at: arg });
+    }
+    else if (name === "documents") setGallery({ items: documentItems(current.files), at: arg, resolve: getAssetAttachmentUrls });
+    else if (name === "delete") setConfirm({
+      title: `Delete ${current.tag}?`,
+      body: "This erases the record, its custody trail, repair tickets, and schedules for good. To keep the history instead, retire the asset.",
+      confirm: "Delete permanently",
+      run: async () => {
+        if (!requirePermission(DELETE_PERMISSION, "deleting an asset")) return;
+        try {
+          const receipts = repairs.filter((repair) => repair.assetId === sel).flatMap((repair) => repair.parts || []).map((part) => part.receipt).filter(Boolean);
+          await runServerMutation(async () => { for (const receipt of receipts) await removeStoredReceipt(receipt); await deleteAsset(sel); }, "Asset permanently deleted.");
+          setSel(null);
+        } catch { /* the server state has been reloaded */ }
+      },
+    });
+  };
   /* The register form belongs to the register: offering it from Settings or
      User Management only invited the question of what it would do there. Every
      other tab already carries its own add control - Add part, Add schedule,
@@ -3801,17 +4092,13 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
     : null;
 
   return (
-    <div className="ams-shell" data-collapsed={railCollapsed ? "1" : "0"} style={{ fontFamily: SANS }}>
+    <div className="ams-shell" style={{ fontFamily: SANS }}>
       <style>{CHROME_CSS}</style>
-      <RegisterSidebar
-        tabs={tabs} tab={tab} onTab={selectTab} identity={identity} onSignOut={onSignOut}
-        open={navOpen} onClose={closeNav} status={syncStatus}
-        railCollapsed={railCollapsed} onToggleRail={toggleRail}
-      />
+      <RegisterSidebar tabs={tabs} tab={tab} onTab={selectTab} />
 
       <main className="ams-main">
         <RegisterTopbar
-        tabs={tabs} tab={tab} navOpen={navOpen} onMenu={() => setNavOpen(true)}
+        tabs={tabs} tab={tab} save={saveState} identity={identity} onSignOut={onSignOut}
         companyNames={ctx.companyNames} company={comp} onCompany={setComp} brand={headerCompany}
         onRefresh={() => reloadOperationalData().catch(() => {})}
         refreshing={refreshing} busy={saving} dataActions={dataActions}
@@ -3820,15 +4107,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
         <input ref={fileRef} type="file" accept="application/json" className="hidden" onChange={importJson} />
 
         {loadErr && <div className="px-5 py-2 text-center" style={{ background: STAGES.broken.tint, color: STAGES.broken.color, fontSize: 13 }}>{loadErr} <button className="underline ml-2" onClick={() => reloadOperationalData().catch(() => {})}>Retry</button></div>}
-        {saveErr && <div className="px-5 py-2 text-center" style={{ background: STAGES.broken.tint, color: STAGES.broken.color, fontSize: 13 }}>{saveErr}</div>}
         {legacyBrowserData?.error && <div className="px-5 py-2 text-center" style={{ background: TINT.warn, color: C.due, fontSize: 13 }}>Legacy {legacyBrowserData.source} data was found but could not be parsed: {legacyBrowserData.error}. Nothing was deleted.</div>}
-        {notice && (
-          <div className="flex items-center justify-center gap-3 px-5 py-2" style={{ background: TINT.ok, color: C.ok, fontSize: 13 }}>
-            {notice}
-            <button onClick={() => setNotice("")} style={{ color: C.ok }} className="hover:opacity-60"><X size={14} /></button>
-          </div>
-        )}
-
         <div id="ams-panel" role="region" aria-labelledby={`ams-nav-${tab}`} className="ams-content">
         {tab === "assets" && (<>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
@@ -3918,247 +4197,57 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
             )}
           </div>
 
-          <div className="flex gap-5 items-start">
-            <div className={`${current ? "hidden md:block" : "block"} w-full md:w-auto shrink-0`}>
-              <div className="ams-table-frame overflow-hidden md:w-80 lg:w-96" style={{ background: C.surface }}>
-                {shown.length === 0 ? (
-                  <div className="px-5 py-12 text-center">
-                    <div style={{ fontSize: 14, marginBottom: 4 }}>{allowedAssets.length === 0 ? "No assets are available in your assigned scope." : "No assets match these filters."}</div>
-                    <div style={{ fontSize: 13, color: C.mute }}>{allowedAssets.length === 0 ? "Ask a Super Admin to review your company and asset-group assignments." : "Widen a dropdown or clear the filters to see more."}</div>
-                  </div>
-                ) : shown.map((a) => {
-                  const s = availOf(a, openJob(a.id));
-                  const dueHere = plansOf(a.id).filter((p) => daysUntil(p.nextDue) <= 30).sort((x, y) => dueOf(x).rank - dueOf(y).rank)[0];
-                  return (
-                    /* the row is a wrapper rather than one button, because the
-                       cart toggle beside it cannot be nested inside one */
-                    <div key={a.id} className="ams-list-row flex items-stretch"
-                      style={{ borderBottom: `1px solid ${C.ruleSoft}`, background: sel === a.id ? C.soft : "transparent", borderLeft: `3px solid ${sel === a.id ? s.color : "transparent"}` }}>
-                      <button type="button" onClick={() => setSel(a.id)} className="min-w-0 flex-1 text-left px-4 py-3 flex gap-3 items-center">
-                      {/* The picture carries the left of the row, because a
-                          yard is remembered by machines rather than by asset
-                          numbers. Rows without one keep the same frame, so
-                          everything to the right still lines up down the list,
-                          and where there is more than one photograph the count
-                          says so rather than hiding the rest. */}
-                      <span className="relative shrink-0" style={{ width: 52, height: 52 }}>
-                        {a.photoUrl ? (
-                          <img src={a.photoUrl} alt={`Asset image — ${a.tag}`} title={`Asset image — ${a.tag}`}
-                            style={{ width: "100%", height: "100%", display: "block", objectFit: "cover",
-                              borderRadius: 7, border: `1px solid ${C.ruleSoft}`, background: C.soft }} />
-                        ) : (
-                          <span aria-hidden="true" title={`No asset image — ${a.tag}`}
-                            style={{ width: "100%", height: "100%", display: "grid", placeItems: "center",
-                              borderRadius: 7, border: `1px solid ${C.ruleSoft}`, background: C.soft }}>
-                            <ImgIcon src="/icon/No%20Image.png" size={19} style={{ color: C.dim }} />
-                          </span>
-                        )}
-                        {a.images?.length > 1 && (
-                          <span aria-hidden="true" title={`${a.images.length} images`}
-                            style={{ position: "absolute", right: -5, bottom: -5, minWidth: 18, height: 18,
-                              padding: "0 4px", display: "grid", placeItems: "center", borderRadius: 999,
-                              background: C.surface, border: `1px solid ${C.rule}`,
-                              fontFamily: MONO, fontSize: 9.5, fontWeight: 700, color: C.mute }}>
-                            {a.images.length}
-                          </span>
-                        )}
-                      </span>
-                      {/* a rule, not a gap: it separates the machine from what
-                          the register knows about it without cutting the row */}
-                      <span aria-hidden="true" style={{ width: 1, alignSelf: "stretch", flexShrink: 0, background: C.ruleSoft }} />
-                      <div className="min-w-0 flex-1">
-                        {/* the number identifies it, the pill says whether it
-                            is anywhere it can be used from - one line, because
-                            they are read together */}
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="uppercase truncate" style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: C.head }}>{a.tag}</span>
-                          {/* tint alone, no border: the colours here are CSS
-                              variables, and "var(--x)22" is not a colour - the
-                              declaration is simply dropped */}
-                          <span className="uppercase shrink-0" style={{ fontFamily: SANS, fontSize: 9, fontWeight: 800, letterSpacing: "0.06em",
-                            color: s.color, background: s.tint, borderRadius: 20, padding: "2px 7px" }}>{s.label}</span>
-                        </div>
-                        <div className="truncate" style={{ fontSize: 14, fontWeight: 600, marginTop: 3, lineHeight: 1.25 }}>{a.name}</div>
-                        <div className="flex items-center gap-1.5 mt-1" style={{ fontSize: 12, color: C.mute, minWidth: 0 }}>
-                          <MapPin size={11} style={{ flexShrink: 0, color: C.dim }} />
-                          <span className="truncate">{a.location}</span>
-                          <span aria-hidden="true" style={{ flexShrink: 0, color: C.rule }}>·</span>
-                          <span className="truncate">{a.custodian}</span>
-                          {dueHere && <CalendarClock size={12} style={{ marginLeft: "auto", flexShrink: 0, color: dueOf(dueHere).color }} />}
-                        </div>
-                      </div>
-                      </button>
-                      {can("asset.transfer") && (cartable(a) ? (
-                        <button type="button" onClick={() => askAddToCart(a)} aria-pressed={inCart(a.id)}
-                          title={inCart(a.id) ? `Remove ${a.tag} from the transfer cart` : `Add ${a.tag} to the transfer cart`}
-                          aria-label={inCart(a.id) ? `Remove ${a.tag} from the transfer cart` : `Add ${a.tag} to the transfer cart`}
-                          className="flex items-center justify-center hover:opacity-70"
-                          style={{ width: 40, color: C.dim, background: inCart(a.id) ? TINT.ok : "transparent", borderLeft: `1px solid ${C.ruleSoft}` }}>
-                          {/* once it is in the cart the control stops being an
-                              invitation and becomes a receipt: the trolley is
-                              replaced by a green tick, which lands with the tap
-                              that put the asset there and then sits still */}
-                          {inCart(a.id)
-                            ? <CheckCircle2 size={16} strokeWidth={2.4} className="ams-cart-tick" />
-                            : <ImgIcon src="/icon/add-to-cart.png" size={17} />}
-                        </button>
-                      ) : (
-                        /* the column stays, so the rows above and below it do
-                           not shift; only the control is gone */
-                        <span aria-hidden="true" className="px-3" style={{ width: 40, borderLeft: `1px solid ${C.ruleSoft}` }} />
-                      ))}
-                    </div>
-                  );
-                })}
+          {/* Every asset as a row under a header, as in the reference build; a
+              row opens its record in the drawer, by click or by Enter. */}
+          <div className="ams-panel">
+            {allowedAssets.length === 0 ? (
+              <div className="ams-empty">
+                <div className="ams-empty-title">No assets registered yet</div>
+                {can("asset.create")
+                  ? <Btn kind="solid" icon={Plus} onClick={() => setDlg({ kind: "asset", name: "register" })}>Register asset</Btn>
+                  : <div className="ams-empty-sub">Ask a Super Admin to review your company and asset-group assignments.</div>}
               </div>
-            </div>
-
-            <div ref={detail} className={`ams-detail ${current ? "block" : "hidden md:block"} flex-1 min-w-0`}>
-              {!current ? (
-                <div className="flex items-center justify-center px-6 text-center" style={{ height: 320, border: `1px dashed ${C.rule}`, borderRadius: 2, color: C.mute, fontSize: 14 }}>
-                  Select an asset to see its availability, schedules, and custody trail.
-                </div>
-              ) : (
-                <div className="ams-table-frame overflow-hidden" style={{ background: C.surface }}>
-                  <div className="px-5 pt-5 pb-4">
-                    <button onClick={() => setSel(null)} className="md:hidden flex items-center gap-1 mb-3" style={{ fontSize: 13, color: C.mute }}><ChevronLeft size={15} />All assets</button>
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <div style={{ fontFamily: MONO, fontSize: 26, fontWeight: 700, letterSpacing: "0.06em", lineHeight: 1.1 }}>{current.tag}</div>
-                        <div style={{ fontSize: 17, marginTop: 2 }}>{current.name}</div>
-                        {/* The code as a code, and only as a code. It used to
-                            be printed as a chip here as well, directly above
-                            the QR that already carries it and captions it, so
-                            the panel showed the same number twice and read as
-                            two different things. The plain value still has a
-                            place: the Asset code row in the details below. */}
-                        {assetScanKey(current) && (
-                          <div className="flex items-start gap-3 mt-3">
-                            <img src={qrDataUri(assetDeepLink(current), 104)} width={104} height={104}
-                              alt={`QR code for ${current.code || current.tag}`}
-                              style={{ display: "block", flexShrink: 0, border: `1px solid ${C.ruleSoft}`, borderRadius: 2, background: "#fff" }} />
-                            <div style={{ maxWidth: 190 }}>
-                              <Label>Asset QR code</Label>
-                              <div style={{ fontSize: 12.5, color: C.mute, lineHeight: 1.45 }}>
-                                Holds <span style={{ fontFamily: MONO }}>{current.code || current.tag}</span>. Scanning it opens this asset here, after signing in.
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      <div className="text-right"><Label>Availability</Label><Chip color={av.color} tint={av.tint} big>{av.label}</Chip></div>
-                    </div>
-
-                    {curJobOfAsset && (
-                      <button onClick={() => { setTab("repairs"); setJob(curJobOfAsset.id); }} className="mt-4 w-full text-left px-3 py-3 flex items-center gap-3"
-                        style={{ background: STAGES[curJobOfAsset.stage].tint, borderLeft: `3px solid ${STAGES[curJobOfAsset.stage].color}` }}>
-                        <Wrench size={15} style={{ color: STAGES[curJobOfAsset.stage].color, flexShrink: 0 }} />
-                        <div className="min-w-0 flex-1">
-                          <div style={{ fontSize: 13.5, fontWeight: 600 }}>{curJobOfAsset.fault}</div>
-                          <div style={{ fontSize: 12.5, color: C.mute }}>{curJobOfAsset.ticket} · {STAGES[curJobOfAsset.stage].label} · day {daysSince(curJobOfAsset.date)} · {money(repairTotal(curJobOfAsset))}</div>
-                        </div>
-                        <ChevronRight size={16} style={{ color: C.mute }} />
-                      </button>
-                    )}
-                  </div>
-
-                  {/* what the numbers cannot tell you: which machine this is on sight.
-                      Keyed on the asset so paging through one asset's pictures does
-                      not carry a position over to the next one opened. */}
-                  {(current.images?.length > 0 || current.photoUrl) && (
-                    <AssetImages key={current.id}
-                      images={current.images?.length ? current.images : [{ id: "cover", url: current.photoUrl }]}
-                      alt={`Asset image — ${current.tag} ${current.name}`}
-                      onOpen={(index) => setGallery({
-                        items: imageItems(current.images?.length ? current.images : [{ id: "cover", url: current.photoUrl }], current),
-                        at: index,
-                      })} />
-                  )}
-
-                  {/* the invoice, the registration, the deed - the papers that
-                      say this machine is the company's, kept with the machine */}
-                  {current.files?.length > 0 && (
-                    <AssetDocuments files={current.files}
-                      onOpen={(index) => setGallery({ items: documentItems(current.files), at: index, resolve: getAssetAttachmentUrls })} />
-                  )}
-
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-y-4 gap-x-4 px-5 py-4" style={{ borderTop: `1px solid ${C.ruleSoft}`, borderBottom: `1px solid ${C.ruleSoft}`, background: C.soft }}>
-                    {[["Company", current.company], ["Project/Location", current.project || NO_PROJECT], ["Address", current.location], ["Responsible person", current.custodian], ["Category", current.category],
-                      ["Brand/Manufacturer", current.brand], ["Model", current.model],
-                      [serialLabel(current.category), current.serial, true],
-                      ...vehicleKeys(current.category).map((k) => [VEHICLE_FIELD_DEFS[k].label, current[k], true]),
-                      ["Body number", current.body, true], ["Asset code", current.code, true], ["Acquired", fmt(current.acquired)], ["Acquisition cost", money(current.cost)]].map(([l, v, mono]) => (
-                      <div key={l}><Label>{l}</Label><div style={{ fontSize: 14, fontFamily: mono ? MONO : SANS, wordBreak: "break-word" }}>{v || "—"}</div></div>
-                    ))}
-                    {current.notes && <div className="col-span-2 sm:col-span-3"><Label>Notes</Label><div style={{ fontSize: 14, lineHeight: 1.5 }}>{current.notes}</div></div>}
-                  </div>
-
-                  {/* schedules on the asset */}
-                  <div className="px-5 py-4" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
-                    <div className="flex items-center justify-between mb-2">
-                      <Label>Maintenance schedules</Label>
-                      {can("maintenance.manage") && <Btn small icon={Plus} onClick={() => setMaintenanceChoice({ lockedAssetTag: current ? `${current.tag} — ${current.name}` : "" })}>Add Maintenance</Btn>}
-                    </div>
-                    {plansOf(current.id).length === 0 ? (
-                      <div className="px-3 py-5 text-center" style={{ border: `1px dashed ${C.rule}`, fontSize: 13, color: C.mute }}>
-                        No recurring maintenance set. Add one for servicing, registration, or calibration.
-                      </div>
-                    ) : (
-                      <div style={{ border: `1px solid ${C.ruleSoft}` }}>
-                        {plansOf(current.id).map((p) => { const d = dueOf(p);
-                          return (
-                            <div key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
-                              <Repeat size={13} style={{ color: C.mute }} />
-                              <div className="flex-1" style={{ minWidth: 150 }}>
-                                <div style={{ fontSize: 13.5 }}>{p.name}</div>
-                                <div style={{ fontSize: 12, color: C.mute }}>{everyLabel(p)} · next {fmt(p.nextDue)}{p.lastDone ? ` · last ${fmt(p.lastDone)}` : ""}</div>
-                              </div>
-                              <Chip color={d.color} tint={d.tint}>{d.label}</Chip>
-                              {can("maintenance.manage") && <Btn small icon={CalendarCheck} onClick={() => setDlg({ kind: "plan", name: "logPlan", planId: p.id })}>Log done</Btn>}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex flex-wrap gap-2 px-5 py-4">
-                    {current.status === "active" && <>
-                      {can("asset.transfer") && <Btn icon={ArrowLeftRight} onClick={() => setDlg({ kind: "asset", name: "transfer" })}>Transfer</Btn>}
-                      {can("asset.transfer") && cartable(current) && (
-                        <Btn icon={inCart(current.id) ? CheckCircle2 : undefined} img={inCart(current.id) ? undefined : "/icon/add-to-cart.png"}
-                          iconClass={inCart(current.id) ? "ams-cart-tick" : undefined} onClick={() => askAddToCart(current)}>
-                          {inCart(current.id) ? "Remove from cart" : "Add to cart"}
-                        </Btn>
-                      )}
-                      {can("repair.create") && <Btn icon={AlertTriangle} onClick={() => setDlg({ kind: "repair", name: "open", assetId: current.id })}>Report fault</Btn>}
-                      {can("asset.retire") && <Btn icon={Archive} onClick={() => setDlg({ kind: "asset", name: "retire" })}>Retire</Btn>}
-                    </>}
-                    {current.status === "repair" && <Btn kind="solid" icon={Wrench} onClick={() => { setTab("repairs"); setJob(curJobOfAsset?.id); }}>Open repair ticket</Btn>}
-                    {current.status === "retired" && can("asset.retire") && <Btn icon={RotateCcw} onClick={() => setDlg({ kind: "asset", name: "reinstate" })}>Bring back into service</Btn>}
-                    {can("asset.update") && <Btn icon={Pencil} onClick={() => setDlg({ kind: "asset", name: "edit" })}>Edit</Btn>}
-                    {/* every sheet this asset has produced: view, print or save */}
-                    <Btn icon={FileText} onClick={() => setFormsFor(current)}>Transfer form</Btn>
-                    {can(DELETE_PERMISSION) && <Btn kind="danger" icon={Trash2} onClick={() => setConfirm({
-                      title: `Delete ${current.tag}?`,
-                      body: "This erases the record, its custody trail, repair tickets, and schedules for good. To keep the history instead, retire the asset.",
-                      confirm: "Delete permanently",
-                      run: async () => {
-                        if (!requirePermission(DELETE_PERMISSION, "deleting an asset")) return;
-                        try {
-                          const receipts = repairs.filter((repair) => repair.assetId === sel).flatMap((repair) => repair.parts || []).map((part) => part.receipt).filter(Boolean);
-                          await runServerMutation(async () => { for (const receipt of receipts) await removeStoredReceipt(receipt); await deleteAsset(sel); }, "Asset permanently deleted.");
-                          setSel(null);
-                        } catch { /* the server state has been reloaded */ }
-                      },
-                    })}>Delete</Btn>}
-                  </div>
-
-                  <HistoryPanel asset={current} csv={csv} repairs={allowedRepairs.filter((r) => r.assetId === current.id)}
-                    onOpenTicket={(id) => { setTab("repairs"); setJob(id); }} />
-                </div>
-              )}
-            </div>
+            ) : shown.length === 0 ? (
+              <div className="ams-empty">
+                <div className="ams-empty-title">No assets match these filters</div>
+                <Btn icon={X} onClick={() => { setQ(""); setCat(""); setLoc(""); setComp(""); setFilter("all"); }}>Clear filters</Btn>
+              </div>
+            ) : (
+              <div className="ams-tblwrap">
+                <table className="ams-tbl">
+                  <thead><tr>
+                    <th>Asset no.</th><th>Asset</th><th>Company</th><th>Project/Location</th>
+                    <th>Responsible person</th><th>Availability</th>
+                    <th><span className="sr-only">Maintenance due</span></th>
+                  </tr></thead>
+                  <tbody>
+                    {shown.map((a) => {
+                      const s = availOf(a, openJob(a.id));
+                      const dueHere = plansOf(a.id).filter((p) => daysUntil(p.nextDue) <= 30).sort((x, y) => dueOf(x).rank - dueOf(y).rank)[0];
+                      const left = dueHere ? daysUntil(dueHere.nextDue) : null;
+                      return (
+                        <tr key={a.id} className="ams-tbl-click" tabIndex={0} onClick={() => setSel(a.id)}
+                          onKeyDown={(e) => { if (e.key === "Enter") setSel(a.id); }}>
+                          <td><RecordTag>{a.tag}</RecordTag></td>
+                          <td><span className="ams-tbl-strong">{a.name}</span><span className="ams-tbl-sub">{a.category || "No category"}</span></td>
+                          <td>{a.company || <span className="ams-tbl-sub">Not recorded</span>}</td>
+                          <td>{a.project || NO_PROJECT}<span className="ams-tbl-sub">{a.location}</span></td>
+                          <td>{a.custodian}</td>
+                          <td><span className="ams-chip" style={{ "--c": s.color }}><span className="ams-chip-dot" />{s.label}</span></td>
+                          <td>
+                            {dueHere && (
+                              <span className="ams-due" style={{ color: dueOf(dueHere).color }} title={`${dueHere.name} due ${fmt(dueHere.nextDue)}`}>
+                                <CalendarClock size={14} aria-hidden="true" />{left < 0 ? "Overdue" : left === 0 ? "Today" : `${left} d`}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </>)}
 
@@ -4309,7 +4398,40 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
         </div>
       </main>
 
-      {dlg && <div className="ams-overlay"><Dialog def={dlgDef} subject={dlgSubject} header={dlgHeader} ctx={ctx} busy={saving} onCancel={() => setDlg(null)}
+      {tab === "assets" && current && (
+        <AssetDrawer key={current.id} asset={current} job={openJob(current.id)}
+          repairs={allowedRepairs.filter((r) => r.assetId === current.id)} plans={plansOf(current.id)}
+          can={can} csv={csv} inCart={inCart(current.id)} cartable={cartable(current)}
+          onClose={() => setSel(null)} onAction={assetAction} />
+      )}
+
+      {/* What the last action did, bottom right: a light plate for news, red
+          for a change that did not go through. Each stays until it is closed
+          or the next one replaces it. */}
+      {(notice || saveErr) && (
+        <div className="ams-toasts">
+          {saveErr && (
+            <div key={`e:${saveErr}`} className="ams-toast" data-tone="error" role="alert">
+              <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span className="min-w-0 flex-1">{saveErr}</span>
+              <button type="button" className="ams-toast-x" onClick={() => setSaveErr("")} aria-label="Dismiss"><X size={14} /></button>
+            </div>
+          )}
+          {notice && (
+            <div key={`n:${notice}`} className="ams-toast" role="status">
+              <CheckCircle2 size={16} style={{ flexShrink: 0, marginTop: 1, color: C.ok }} />
+              <span className="min-w-0 flex-1">{notice}</span>
+              <button type="button" className="ams-toast-x" onClick={() => setNotice("")} aria-label="Dismiss"><X size={14} /></button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {dlg && dlg.kind === "asset" && ["register", "edit"].includes(dlg.name) && (
+        <div className="ams-overlay"><AssetForm mode={dlg.name} asset={dlg.name === "edit" ? current : null} ctx={ctx} busy={saving}
+          serverError={saveErr} onCancel={() => setDlg(null)} onSubmit={(vals, meta) => runAsset(dlg.name, vals, meta)} /></div>
+      )}
+      {dlg && !(dlg.kind === "asset" && ["register", "edit"].includes(dlg.name)) && <div className="ams-overlay"><Dialog def={dlgDef} subject={dlgSubject} header={dlgHeader} ctx={ctx} busy={saving} onCancel={() => setDlg(null)}
         onSubmit={(vals) => dlg.kind === "asset" ? runAsset(dlg.name, vals) : dlg.kind === "repair" ? runRepair(dlg.name, vals) : dlg.kind === "part" ? runPart(dlg.name, vals) : dlg.kind === "person" ? runPerson(dlg.name, vals) : dlg.kind === "brand" ? runBrand(dlg.name, vals) : dlg.kind === "company" ? runCompany(dlg.name, vals) : dlg.kind === "category" ? runCategory(dlg.name, vals) : dlg.kind === "project" ? runProject(dlg.name, vals) : runPlan(dlg.name, vals)} /></div>}
 
       {assetImport && (
@@ -4363,7 +4485,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
       )}
 
       {scanMiss && (
-        <div className="ams-overlay fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(11,13,15,0.55)" }}>
+        <div className="ams-overlay ams-scrim fixed inset-0 z-50 flex items-center justify-center p-6">
           <div role="alertdialog" aria-modal="true" aria-labelledby="ams-sticker-title"
             className="p-5" style={{ maxWidth: 420, background: C.surface, borderRadius: 2 }}>
             <div id="ams-sticker-title" style={{ fontSize: 16, fontWeight: 600 }}>That asset is not on your register</div>
@@ -4376,7 +4498,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
       )}
 
       {transferMissing && (
-        <div className="ams-overlay fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(11,13,15,0.55)" }}>
+        <div className="ams-overlay ams-scrim fixed inset-0 z-50 flex items-center justify-center p-6">
           <div role="alertdialog" aria-modal="true" aria-labelledby="ams-scan-title"
             className="p-5" style={{ maxWidth: 420, background: C.surface, borderRadius: 2 }}>
             <div id="ams-scan-title" style={{ fontSize: 16, fontWeight: 600 }}>That transfer is not on your register</div>
@@ -4430,7 +4552,7 @@ export default function AssetRegister({ currentUser, access, onSignOut }) {
       )}
 
       {confirm && (
-        <div className="ams-overlay fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(11,13,15,0.55)" }}>
+        <div className="ams-overlay ams-scrim fixed inset-0 z-50 flex items-center justify-center p-6">
           <div role="alertdialog" aria-modal="true" aria-labelledby="ams-confirm-title"
             className="p-5" style={{ maxWidth: 420, background: C.surface, borderRadius: 2 }}>
             <div id="ams-confirm-title" style={{ fontSize: 16, fontWeight: 600 }}>{confirm.title}</div>
@@ -4470,7 +4592,7 @@ function PartRow({ part: p, job, asset, onAct, onView, onDrop, showTicket, locke
       ? <Btn small kind={p.receipt ? "ghost" : "solid"} icon={Receipt} onClick={() => onAct("receipt", job.id, p.id)}>{p.receipt ? "Replace receipt" : "Attach receipt"}</Btn>
       : <span style={{ fontSize: 12, color: C.mute }}>Closed</span>
   ) : (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       {p.state === "Needed" && can("purchasing.manage") && <Btn small icon={ShoppingCart} onClick={() => onAct("order", job.id, p.id)}>Mark ordered</Btn>}
       {p.state === "Ordered" && can("purchasing.manage") && <Btn small kind="solid" icon={Receipt} onClick={() => onAct("purchase", job.id, p.id)}>Record purchase</Btn>}
       {p.state === "Purchased" && can("purchasing.manage") && <Btn small icon={Pencil} onClick={() => onAct("purchase", job.id, p.id)}>Edit</Btn>}
@@ -4537,7 +4659,7 @@ function ReceiptViewer({ meta, onClose, onRemove, canRemove, removeLabel = "Remo
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(25,28,39,0.6)" }}>
+    <div className="ams-scrim fixed inset-0 z-50 flex items-center justify-center p-4">
       <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
         className="flex flex-col" style={{ maxWidth: 720, width: "100%", maxHeight: "92vh", background: C.surface, borderRadius: 2, outline: "none" }}>
         <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
@@ -4734,9 +4856,29 @@ function AssetMap({ assets, projects, companies, categoryNames, openJob, onOpenA
         ) : (
           <>
             <style>{`
+              /* Tiles darkened to sit on the slate ground: inverted, turned
+                 back round the colour wheel so water stays blue, then
+                 desaturated and dimmed. Controls and summaries are restyled
+                 as the rest of the chrome. */
+              /* isolate keeps Leaflet's own layer order (panes up to z-index
+                 1000) inside the map, so markers and zoom buttons never draw
+                 over the sticky top bar or the phone's bottom bar */
+              .ams-map.leaflet-container{isolation:isolate;background:#232827;font-family:${SANS}}
+              .ams-map .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.86) contrast(.9) saturate(.35)}
+              .ams-map .leaflet-bar{overflow:hidden;border:1px solid var(--ams-line)!important;border-radius:10px;box-shadow:0 8px 22px rgba(0,0,0,.35)}
+              .ams-map .leaflet-bar a{width:32px;height:32px;line-height:30px;border-bottom:1px solid var(--ams-line);background:var(--ams-surface);color:var(--ams-text);transition:background 160ms ease,color 160ms ease}
+              .ams-map .leaflet-bar a:last-child{border-bottom:0}
+              .ams-map .leaflet-bar a:hover{background:var(--ams-surface-2);color:var(--ams-sand)}
+              .ams-map .leaflet-bar a.leaflet-disabled{background:var(--ams-surface);color:var(--ams-dim)}
+              .ams-map .leaflet-control-attribution{background:rgba(37,42,41,.82);color:var(--ams-dim)}
+              .ams-map .leaflet-control-attribution a{color:var(--ams-sand-ink)}
+              .ams-map .leaflet-tooltip{padding:8px 11px;border:1px solid var(--ams-line);border-radius:9px;background:var(--ams-surface-2);color:var(--ams-text);
+                font-size:12px;line-height:1.5;box-shadow:0 12px 30px rgba(0,0,0,.45)}
+              .ams-map .leaflet-tooltip strong{color:var(--ams-head);font-weight:600}
+              .ams-map .leaflet-tooltip-top:before{border-top-color:var(--ams-line)}
               .qm-pin{display:block;width:var(--d);height:var(--d);position:relative}
               .qm-pin i{position:absolute;inset:0;border-radius:50%;background:var(--tone);
-                border:2px solid var(--tone);opacity:.85;box-shadow:0 0 0 0 var(--tone);
+                border:2px solid rgba(239,243,233,.88);opacity:.92;box-shadow:0 0 0 0 var(--tone);
                 animation:qmPulse 2.4s cubic-bezier(.24,.72,.4,1) infinite}
               @keyframes qmPulse{
                 0%{box-shadow:0 0 0 0 color-mix(in srgb, var(--tone) 55%, transparent)}
@@ -4745,7 +4887,7 @@ function AssetMap({ assets, projects, companies, categoryNames, openJob, onOpenA
               }
               @media (prefers-reduced-motion: reduce){.qm-pin i{animation:none}}
             `}</style>
-            <div ref={box} style={{ height: 460, width: "100%", background: C.surface, border: `1px solid ${C.rule}`, borderBottom: "none" }} />
+            <div ref={box} className="ams-map" style={{ height: 460, width: "100%", background: C.surface, border: `1px solid ${C.rule}`, borderBottom: "none" }} />
             <div className="flex flex-wrap items-center gap-x-5 gap-y-1 px-4 py-2" style={{ background: C.surface, border: `1px solid ${C.rule}`, fontSize: 12, color: C.mute }}>
               <span>Circle colour shows the worst status on site; size shows how many assets.</span>
               {[["All active", C.active], ["Something broken or in repair", STAGES.broken.color], ["All retired", C.retired]].map(([l, col]) => (
@@ -4785,7 +4927,7 @@ function AssetMap({ assets, projects, companies, categoryNames, openJob, onOpenA
                 <button key={a.id} onClick={() => onOpenAsset(a.id)} className="w-full text-left px-4 py-2.5 flex items-start gap-3" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
                   <Dot color={st.color} />
                   <div className="min-w-0 flex-1">
-                    <div className="uppercase" style={{ fontFamily: MONO, fontSize: 10.5, letterSpacing: "0.1em", color: st.color }}>{a.tag} · {a.project || NO_PROJECT}</div>
+                    <div className="flex items-center gap-2" style={{ minWidth: 0 }}><RecordTag>{a.tag}</RecordTag><span className="uppercase truncate" style={{ fontFamily: MONO, fontSize: 10.5, letterSpacing: "0.1em", color: C.mute }}>{a.project || NO_PROJECT}</span></div>
                     <div className="truncate" style={{ fontSize: 13.5 }}>{a.name}</div>
                     <div className="truncate" style={{ fontSize: 12, color: C.mute }}>{a.custodian}</div>
                   </div>
@@ -5138,7 +5280,7 @@ function EroFormViewer({ data, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(25,28,39,0.6)" }}>
+    <div className="ams-scrim fixed inset-0 z-50 flex items-center justify-center p-4">
       <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
         className="flex flex-col" style={{ maxWidth: 900, width: "100%", maxHeight: "94vh", background: C.surface, borderRadius: 2, outline: "none" }}>
         <div className="flex items-center justify-between gap-3 px-4 py-3" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
@@ -5204,14 +5346,14 @@ function TransferFormViewer({ data, onClose }) {
   const { asset, movement } = data;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(25,28,39,0.6)" }}>
+    <div className="ams-scrim fixed inset-0 z-50 flex items-center justify-center p-4">
       <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
         className="flex flex-col" style={{ maxWidth: 1000, width: "100%", maxHeight: "94vh", background: C.surface, borderRadius: 2, outline: "none" }}>
         <div className="flex items-center justify-between gap-3 px-4 py-3" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
           <div className="min-w-0">
             <div id={titleId} style={{ fontSize: 14, fontWeight: 600 }}>
               Transfer form
-              {movement.number ? <span style={{ fontFamily: DISPLAY, color: C.overdue, marginLeft: 8 }}>NO. {movement.number}</span> : null}
+              {movement.number ? <RecordTag style={{ marginLeft: 8, verticalAlign: "1px" }}>NO. {movement.number}</RecordTag> : null}
             </div>
             <div style={{ fontFamily: MONO, fontSize: 11, color: C.mute }}>{asset.tag} · {fmt(movement.date)}</div>
           </div>
@@ -5239,7 +5381,7 @@ function TransferFormsDialog({ asset, movements, onClose, onView, onPrint, onDow
   useDialogFocus(panel);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6" style={{ background: "rgba(25,28,39,0.45)" }}>
+    <div className="ams-scrim fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6">
       <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
         className="w-full flex flex-col" style={{ maxWidth: 620, maxHeight: "92vh", background: C.surface, borderRadius: 2, outline: "none" }}>
         <div className="flex items-start justify-between gap-3 px-5 py-4" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
@@ -5373,7 +5515,7 @@ function QrScanner({ title, onResult, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6" style={{ background: "rgba(25,28,39,0.45)" }}>
+    <div className="ams-scrim fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6">
       <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
         className="w-full flex flex-col" style={{ maxWidth: 460, background: C.surface, borderRadius: 2, outline: "none" }}>
         <div className="flex items-start justify-between gap-3 px-5 py-4" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
@@ -5486,14 +5628,14 @@ function TransferDetails({ view, canAttach, canDetach, busy, onClose, onForm, on
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6" style={{ background: "rgba(25,28,39,0.45)" }}>
+    <div className="ams-scrim fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6">
       <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
         className="w-full flex flex-col" style={{ maxWidth: 620, maxHeight: "92vh", background: C.surface, borderRadius: 2, outline: "none" }}>
         <div className="flex items-start justify-between gap-3 px-5 py-4" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
           <div className="min-w-0">
             <div id={titleId} style={{ fontSize: 16, fontWeight: 600 }}>
               Transfer details
-              {entry.number ? <span style={{ fontFamily: DISPLAY, color: C.overdue, marginLeft: 8 }}>TR {entry.number}</span> : null}
+              {entry.number ? <RecordTag style={{ marginLeft: 8, verticalAlign: "2px" }}>TR {entry.number}</RecordTag> : null}
             </div>
             <div style={{ fontSize: 13, color: C.mute, marginTop: 2 }}>{fmt(entry.date)}</div>
           </div>
@@ -5505,8 +5647,8 @@ function TransferDetails({ view, canAttach, canDetach, busy, onClose, onForm, on
             <div className="col-span-2">
               <Label>Asset</Label>
               <button type="button" onClick={() => onOpenAsset(asset.id)} className="text-left">
-                <div style={{ fontFamily: MONO, fontSize: 12, color: C.mute }}>{asset.tag}</div>
-                <div style={{ fontSize: 14 }}>{asset.name}</div>
+                <RecordTag>{asset.tag}</RecordTag>
+                <div style={{ fontSize: 14, marginTop: 3 }}>{asset.name}</div>
               </button>
             </div>
             <Fact label="Address" from={entry.move?.fromLoc} to={entry.move?.toLoc} />
@@ -5726,7 +5868,7 @@ function TransferCartTab({ assets, movable, statusOf, onOpen, onRemove, onClear,
                     </span>
                   )}
                   <div className="min-w-0 flex-1">
-                    <div className="uppercase" style={{ fontFamily: MONO, fontSize: 11, letterSpacing: "0.1em", color: state.color }}>{asset.tag}</div>
+                    <RecordTag>{asset.tag}</RecordTag>
                     <div className="truncate" style={{ fontSize: 14, fontWeight: 500 }}>{asset.name}</div>
                     <div className="truncate" style={{ fontFamily: MONO, fontSize: 11, color: C.mute }}>{cartLine(asset)}</div>
                     <div className="truncate" style={{ fontSize: 12, color: C.mute }}>Held by {asset.custodian || "—"}</div>
@@ -5808,14 +5950,12 @@ function TransfersTab({ assets, onOpenDetails, onForm, onScan }) {
               {/* the same number the printed form carries, so a sheet on a
                   desk can be found here without reading the dates */}
               <div>
-                <div style={{ fontFamily: DISPLAY, fontSize: 13.5, fontWeight: 700, color: entry.number ? C.overdue : C.dim }}>
-                  {entry.number ? `TR ${entry.number}` : "—"}
-                </div>
+                {entry.number ? <RecordTag>TR {entry.number}</RecordTag> : <span style={{ color: C.dim }}>—</span>}
               </div>
               <div style={{ fontFamily: MONO, fontSize: 12.5, color: C.mute }}>{fmt(entry.date)}</div>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontFamily: MONO, fontSize: 12, color: C.mute }}>{asset.tag}</div>
-                <div className="truncate" style={{ fontSize: 13.5 }}>{asset.name}</div>
+                <RecordTag>{asset.tag}</RecordTag>
+                <div className="truncate" style={{ fontSize: 13.5, marginTop: 3 }}>{asset.name}</div>
               </div>
               <div style={{ fontSize: 13, minWidth: 0 }}>
                 <span style={{ color: C.mute }}>{entry.move?.fromLoc || "—"}</span>
@@ -5931,151 +6071,326 @@ function PartsTab({ repairs, assets, onAct, onView, onDrop, onAdd, can }) {
 
 /* --------------------------- history panel --------------------------- */
 
-function HistoryPanel({ asset, repairs, csv, onOpenTicket }) {
-  const [view, setView] = useState("trail");
-  const chain = movements(asset);
-  const shown = [...chain].reverse();
-  const held = chain.find((m) => m.current);
-  const general = (asset.history || []).filter((h) => !isRepairEntry(h) && !isMoveEntry(h));
-  const tickets = [...repairs].sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  const outDays = tickets.reduce((s, t) => s + (t.closed && t.closedOn
-    ? Math.max(0, Math.round((new Date(t.closedOn + "T00:00:00") - new Date(t.date + "T00:00:00")) / 864e5))
-    : daysSince(t.date)), 0);
+/* =========================================================================
+   The asset record, as a drawer: 900px from the right over a dimmed page,
+   full width on a phone. The header stays put - the sticker, what can be
+   done with the asset now, and the tabs - and the body under it scrolls.
+
+   It closes on the dimmed page, the × or Escape. Anything opened from it (a
+   transfer, an edit, a schedule) is a dialog on top, so Escape closes that
+   first and the drawer is still there underneath.
+   ========================================================================= */
+const peso = (v) => `₱${num(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/* A two-column list of facts under a small heading, with 1px lines between
+   them. A half-width fact left alone at the end of a row - before a
+   full-width one, or at the very end - takes the whole row, so the grid never
+   ends in an empty cell. */
+function DetailList({ title, items }) {
+  const shown = items.filter(Boolean);
+  /* walked once, carrying which column the next fact lands in */
+  const cells = shown.reduce((out, item, index) => {
+    const next = shown[index + 1];
+    const span = !!item.full || (out.column === 0 && (!next || !!next.full));
+    return { column: span ? 0 : (out.column + 1) % 2, list: [...out.list, { ...item, span }] };
+  }, { column: 0, list: [] }).list;
+  return (
+    <section className="ams-dl-group">
+      <div className="ams-dl-head">{title}</div>
+      <div className="ams-dl">
+        {cells.map((item) => {
+          const empty = item.value === undefined || item.value === null || String(item.value).trim() === "";
+          return (
+            <div key={item.label} className="ams-dl-cell" data-span={item.span ? "1" : undefined}>
+              <div className="ams-dl-label">{item.label}</div>
+              {empty
+                ? <div className="ams-dl-empty">Not recorded</div>
+                : <div className="ams-dl-value" style={item.mono ? { fontFamily: MONO } : undefined}>{item.value}</div>}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/* a value that changed shows the new one, with where it came from under it */
+const Changed = ({ to, from, mono }) => (
+  <>
+    <div style={mono ? { fontFamily: MONO, fontSize: 12.5 } : undefined}>{to || "—"}</div>
+    {from && from !== to && <div className="ams-from">from {from}</div>}
+  </>
+);
+
+const EmptyTab = ({ children }) => <div className="ams-tab-empty">{children}</div>;
+
+function AssetDrawer({ asset: a, job, repairs, plans, can, csv, inCart, cartable, onClose, onAction }) {
+  const panel = useRef(null);
+  const titleId = useId();
+  const [tab, setTab] = useState("details");
+  useEscapeKey(true, onClose);
+  useDialogFocus(panel);
+  /* the page behind does not scroll while the drawer is over it */
+  useEffect(() => {
+    const before = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = before; };
+  }, []);
+
+  const av = availOf(a, job);
+  const retired = a.status === "retired";
+  const chain = movements(a);
+  const general = [...(a.history || [])].filter((h) => !isRepairEntry(h) && !isMoveEntry(h)).reverse();
+  const tickets = [...repairs].sort((x, y) => String(y.date).localeCompare(String(x.date)));
+  const repairSpend = tickets.reduce((s, t) => s + repairTotal(t), 0);
+  const upkeepSpend = plans.reduce((s, p) => s + planSpend(p), 0);
+  const completions = plans.reduce((s, p) => s + (p.done || []).length, 0);
+  const value = num(a.cost);
+  const share = value > 0 && (tickets.length || completions)
+    ? `${(((repairSpend + upkeepSpend) / value) * 100).toFixed(1)}% of the acquisition cost` : "";
 
   const exportMoves = () => csv(
     ["date", "from_project_location", "to_project_location", "from_address", "to_address", "from_person", "to_person", "reason", "days_held"],
     chain.map((m) => [m.date, m.move?.fromProject || "", m.move?.project || "", m.move?.fromLoc || "", m.move?.toLoc || "", m.move?.fromPer || "", m.move?.toPer || "", m.move?.why || m.text, m.days]),
-    `transfers-${asset.tag}-${today()}.csv`);
+    `transfers-${a.tag}-${today()}.csv`);
 
-  const Arrow = ({ from, to }) => {
-    if (!from) return <span style={{ fontSize: 13 }}>{to || "—"}</span>;
-    if (from === to) return <span style={{ fontSize: 13, color: C.mute }}>{to} <span style={{ fontSize: 11 }}>(unchanged)</span></span>;
-    return (
-      <span style={{ fontSize: 13 }}>
-        <span style={{ color: C.mute, textDecoration: "line-through" }}>{from}</span>
-        <span style={{ color: C.active, margin: "0 5px" }}>→</span>
-        <span style={{ fontWeight: 500 }}>{to}</span>
-      </span>
-    );
-  };
+  const projectText = (pid) => (!pid || pid === NO_PROJECT ? "X (not on a project site)" : pid);
+
+  const tabs = [
+    ["details", "Details", null],
+    ["history", "History", general.length],
+    ["transfers", "Transfers", chain.length],
+    ["repairs", "Repairs", tickets.length],
+    ["maintenance", "Maintenance", plans.length],
+  ];
 
   return (
-    <div className="px-5 py-4" style={{ borderTop: `1px solid ${C.ruleSoft}` }}>
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <div className="flex" style={{ border: `1px solid ${C.rule}`, borderRadius: 11, overflow: "hidden", background: C.soft }}>
-          {[["trail", "General trail", general.length], ["moves", "Transfers", chain.length], ["repairs", "Repairs", tickets.length]].map(([k, l, n]) => (
-            <button key={k} onClick={() => setView(k)} className="flex items-center gap-2 px-3 py-1.5"
-              style={{ background: view === k ? C.brand : "transparent", color: view === k ? C.brandInk : C.mute, fontSize: 13 }}>
-              {l}<span style={{ fontFamily: MONO, fontSize: 10.5, opacity: 0.7 }}>{n}</span>
-            </button>
-          ))}
-        </div>
-        {view === "moves" && chain.length > 0 && <Btn small icon={Download} onClick={exportMoves}>Export transfers</Btn>}
-      </div>
-
-      {view === "trail" && (
-        general.length === 0
-          ? <div className="px-3 py-6 text-center" style={{ border: `1px dashed ${C.rule}`, fontSize: 13, color: C.mute }}>Nothing here yet.</div>
-          : <><Trail entries={general} />
-              {tickets.length > 0 && (
-                <div style={{ fontSize: 12.5, color: C.mute, marginTop: -8 }}>
-                  Repair steps are kept separately — {tickets.length} ticket{tickets.length > 1 ? "s" : ""} under Repairs.
-                </div>
-              )}
-            </>
-      )}
-
-      {view === "repairs" && (
-        tickets.length === 0 ? (
-          <div className="px-3 py-6 text-center" style={{ border: `1px dashed ${C.rule}`, fontSize: 13, color: C.mute }}>
-            No repairs on record for this asset.
+    <>
+      <div className="ams-drawer-scrim" onClick={onClose} aria-hidden="true" />
+      <aside ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className="ams-drawer">
+        <header className="ams-drawer-head">
+          <div className="ams-drawer-top">
+            <span>Asset record</span>
+            <button type="button" className="ams-icon-btn" onClick={onClose} aria-label="Close asset record"><X size={18} /></button>
           </div>
-        ) : (<>
-          <div className="flex flex-wrap gap-x-8 gap-y-2 px-3 py-3 mb-3" style={{ background: C.soft, border: `1px solid ${C.ruleSoft}` }}>
-            {[["Tickets", tickets.length], ["Days out of service", outDays], ["Total repair cost", money(tickets.reduce((s, t) => s + repairTotal(t), 0))]].map(([l, v]) => (
-              <div key={l}><Label>{l}</Label><div style={{ fontFamily: MONO, fontSize: 15 }}>{v}</div></div>
+
+          <div className="ams-sticker">
+            <div className="ams-sticker-main">
+              <div className="ams-sticker-row">
+                <span id={titleId} className="ams-sticker-no">{a.tag}</span>
+                <span className="ams-sticker-status" style={{ "--c": av.color }}>{av.label}</span>
+              </div>
+              <div className="ams-sticker-name">{a.name}</div>
+              <div className="ams-sticker-meta">{[a.category, a.company].filter(Boolean).join(", ") || "No category or company recorded"}</div>
+            </div>
+            <div className="ams-sticker-qr">
+              {a.code ? (
+                <>
+                  <img src={qrDataUri(assetDeepLink(a), 120)} width={60} height={60} alt={`QR code for ${a.code}`} />
+                  <span style={{ fontFamily: MONO }}>{a.code}</span>
+                </>
+              ) : (
+                <>
+                  <QrCode size={30} strokeWidth={1.6} aria-hidden="true" />
+                  <span>No QR code yet</span>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="ams-drawer-actions">
+            {!retired && !job && <>
+              {can("asset.transfer") && <Btn small icon={ArrowLeftRight} onClick={() => onAction("transfer")}>Transfer</Btn>}
+              {can("asset.transfer") && cartable && (
+                <Btn small icon={inCart ? CheckCircle2 : undefined} img={inCart ? undefined : "/icon/add-to-cart.png"}
+                  iconClass={inCart ? "ams-cart-tick" : undefined} onClick={() => onAction("cart")}>
+                  {inCart ? "Remove from cart" : "Add to cart"}
+                </Btn>
+              )}
+              {can("repair.create") && <Btn small icon={AlertTriangle} onClick={() => onAction("fault")}>Report fault</Btn>}
+              {can("asset.retire") && <Btn small icon={Archive} onClick={() => onAction("retire")}>Retire</Btn>}
+              {can("asset.update") && <Btn small icon={Pencil} onClick={() => onAction("edit")}>Edit</Btn>}
+            </>}
+            {!retired && job && can("repair.view") && (
+              <Btn small kind="solid" icon={Wrench} onClick={() => onAction("ticket", job.id)}>Open repair ticket {job.ticket}</Btn>
+            )}
+            {retired && can("asset.retire") && <Btn small icon={RotateCcw} onClick={() => onAction("reinstate")}>Bring back into service</Btn>}
+            {!job && can(DELETE_PERMISSION) && (
+              <button type="button" className="ams-link-danger" onClick={() => onAction("delete")}><Trash2 size={14} />Delete record</button>
+            )}
+          </div>
+
+          <div className="ams-tabs" role="tablist" aria-label="Asset record">
+            {tabs.map(([key, label, n]) => (
+              <button key={key} type="button" role="tab" aria-selected={tab === key} className="ams-tab" onClick={() => setTab(key)}>
+                {label}{n !== null && <span className="ams-tab-n">{n}</span>}
+              </button>
             ))}
           </div>
-          <div style={{ border: `1px solid ${C.ruleSoft}` }}>
-            {tickets.map((t) => {
-              const st = t.closed ? { label: `Closed ${fmt(t.closedOn)}`, color: C.retired, tint: TINT.idle } : { label: STAGES[t.stage].label, color: STAGES[t.stage].color, tint: STAGES[t.stage].tint };
-              return (
-                <button key={t.id} onClick={() => onOpenTicket(t.id)} className="w-full text-left flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-3"
-                  style={{ borderBottom: `1px solid ${C.ruleSoft}`, borderLeft: `3px solid ${st.color}` }}>
-                  <div style={{ width: 78 }}>
-                    <div style={{ fontFamily: MONO, fontSize: 11, letterSpacing: "0.1em", color: C.mute }}>{t.ticket}</div>
-                    <div style={{ fontFamily: MONO, fontSize: 11, color: C.mute }}>{fmt(t.date)}</div>
-                  </div>
-                  <div className="flex-1" style={{ minWidth: 160 }}>
-                    <div style={{ fontSize: 13.5 }}>{t.fault}</div>
-                    <div style={{ fontSize: 12.5, color: C.mute }}>
-                      {[t.provider, t.technician && `by ${t.technician}`, (t.parts || []).length ? `${t.parts.length} part${t.parts.length > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ") || "No provider recorded"}
-                    </div>
-                  </div>
-                  <Chip color={st.color} tint={st.tint}>{st.label}</Chip>
-                  <div style={{ fontFamily: MONO, fontSize: 13, width: 90, textAlign: "right" }}>{money(repairTotal(t))}</div>
-                  <ChevronRight size={15} style={{ color: C.mute }} />
-                </button>
-              );
-            })}
-          </div>
-        </>)
-      )}
+        </header>
 
-      {view === "moves" && (
-        chain.length === 0 ? (
-          <div className="px-3 py-6 text-center" style={{ border: `1px dashed ${C.rule}`, fontSize: 13, color: C.mute }}>
-            No movements recorded yet. Transfers, repair despatches, and releases all appear here.
-          </div>
-        ) : (<>
-          {held && (
-            <div className="px-3 py-3 mb-3" style={{ background: TINT.ok, borderLeft: `3px solid ${C.active}` }}>
-              <Label>Held since {fmt(held.date)}</Label>
-              <div style={{ fontSize: 14 }}>{asset.custodian} · {asset.location}</div>
-              <div style={{ fontSize: 12.5, color: C.mute, marginTop: 1 }}>
-                {held.days} day{held.days === 1 ? "" : "s"} in this placement · {chain.length - 1} movement{chain.length - 1 === 1 ? "" : "s"} before this
+        <div className="ams-drawer-body" role="tabpanel">
+          {tab === "details" && <>
+            {(a.images?.length > 0 || a.photoUrl) && (
+              <div className="ams-drawer-card">
+                <AssetImages key={a.id}
+                  images={a.images?.length ? a.images : [{ id: "cover", url: a.photoUrl }]}
+                  alt={`Asset image — ${a.tag} ${a.name}`}
+                  onOpen={(index) => onAction("images", index)} />
               </div>
+            )}
+            {a.files?.length > 0 && (
+              <div className="ams-drawer-card"><AssetDocuments files={a.files} onOpen={(index) => onAction("documents", index)} /></div>
+            )}
+            <DetailList title="Identification" items={[
+              { label: "Company", value: a.company },
+              { label: "Category", value: a.category },
+              { label: "Brand/Manufacturer", value: a.brand },
+              { label: "Model", value: a.model },
+              { label: "Asset code (QR sticker)", value: a.code, mono: true },
+              (hasBodyNumber(a.category) || a.body) && { label: "Body number", value: a.body, mono: true },
+              { label: serialLabel(a.category), value: a.serial, mono: true },
+              ...vehicleKeys(a.category).map((k) => ({ label: VEHICLE_FIELD_DEFS[k].label, value: a[k], mono: true })),
+            ]} />
+            <DetailList title="Assignment" items={[
+              { label: "Project/Location", value: projectText(a.project) },
+              { label: "Responsible person", value: a.custodian },
+              { label: "Address", value: a.location, full: true },
+            ]} />
+            <DetailList title="Value and upkeep" items={[
+              { label: "Date acquired", value: a.acquired ? fmt(a.acquired) : "" },
+              { label: "Acquisition cost", value: a.cost !== "" && a.cost !== null && a.cost !== undefined ? peso(a.cost) : "" },
+              { label: "Repairs to date", value: tickets.length ? `${peso(repairSpend)} across ${plural(tickets.length, "ticket")}` : "" },
+              { label: "Maintenance to date", value: completions ? `${peso(upkeepSpend)} across ${plural(completions, "completion")}` : "" },
+              { label: "Upkeep as share of value", value: share },
+              retired
+                ? { label: "Retired on", value: a.retiredOn ? [fmt(a.retiredOn), a.retirementReason].filter(Boolean).join(" · ") : "" }
+                : { label: "First placed", value: chain[0]?.date ? fmt(chain[0].date) : "" },
+              { label: "Notes", value: a.notes, full: true },
+            ]} />
+          </>}
+
+          {tab === "history" && (general.length === 0 ? <EmptyTab>No history recorded</EmptyTab> : (
+            <div className="ams-log">
+              {general.map((h, i) => (
+                <div key={`${h.ts}-${i}`} className="ams-log-row">
+                  <div className="ams-log-date">{fmt(h.date)}</div>
+                  <div className="min-w-0">
+                    <div className="ams-log-text"><Dot color={TRAIL[h.kind] || C.mute} size={7} />{h.text}</div>
+                    {h.sub && <div className="ams-log-sub">{h.sub}</div>}
+                    {h.recordedBy && <div className="ams-log-by">by {h.recordedBy}</div>}
+                  </div>
+                </div>
+              ))}
             </div>
-          )}
-          <div className="ams-table-frame overflow-x-auto">
-            <table className="ams-table" style={{ minWidth: 620 }}>
-              <thead>
-                <tr style={{ background: C.soft }}>
-                  {["Date", "Project/Location", "Address", "Responsible person", "Reason", "Held"].map((h, i) => (
-                    <th key={h} className="uppercase" style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.12em", color: C.mute, textAlign: i === 5 ? "right" : "left", padding: "8px 10px", borderBottom: `1px solid ${C.rule}`, whiteSpace: "nowrap" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {shown.map((m, i) => (
-                  <tr key={m.ts + "" + i} style={{ borderBottom: `1px solid ${C.ruleSoft}`, background: m.current ? C.soft : "transparent" }}>
-                    <td style={{ padding: "9px 10px", verticalAlign: "top", whiteSpace: "nowrap" }}>
-                      <div style={{ fontFamily: MONO, fontSize: 11.5 }}>{fmt(m.date)}</div>
-                      {m.current && <div className="uppercase" style={{ fontFamily: MONO, fontSize: 9, letterSpacing: "0.12em", color: C.active, marginTop: 2 }}>Current</div>}
-                    </td>
-                    <td style={{ padding: "9px 10px", verticalAlign: "top", fontFamily: MONO, fontSize: 12 }}>
-                      {!m.move?.project ? "—"
-                        : m.move.fromProject && m.move.fromProject !== m.move.project
-                        ? (<><span style={{ color: C.mute, textDecoration: "line-through" }}>{m.move.fromProject}</span>
-                            <span style={{ color: C.active, margin: "0 4px" }}>→</span>{m.move.project}</>)
-                        : m.move.project}
-                    </td>
-                    <td style={{ padding: "9px 10px", verticalAlign: "top" }}>
-                      {m.move ? <Arrow from={m.move.fromLoc} to={m.move.toLoc} /> : <span style={{ fontSize: 13, color: C.mute }}>—</span>}
-                    </td>
-                    <td style={{ padding: "9px 10px", verticalAlign: "top" }}>
-                      {m.move ? <Arrow from={m.move.fromPer} to={m.move.toPer} /> : <span style={{ fontSize: 13, color: C.mute }}>—</span>}
-                    </td>
-                    <td style={{ padding: "9px 10px", verticalAlign: "top", fontSize: 12.5, color: C.mute }}>{m.move?.why || m.text}</td>
-                    <td style={{ padding: "9px 10px", verticalAlign: "top", fontFamily: MONO, fontSize: 12, textAlign: "right", whiteSpace: "nowrap" }}>{m.days}d</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>)
-      )}
-    </div>
+          ))}
+
+          {tab === "transfers" && <>
+            <div className="ams-tab-bar">
+              <span>Chain of custody, newest first. Held counts the days the asset stayed in each placement.</span>
+              <span className="flex flex-wrap gap-2">
+                <Btn small icon={FileText} onClick={() => onAction("forms")}>Transfer forms</Btn>
+                {chain.length > 0 && <Btn small icon={Download} onClick={exportMoves}>Export CSV</Btn>}
+              </span>
+            </div>
+            {chain.length === 0 ? <EmptyTab>No movements recorded</EmptyTab> : (
+              <div className="ams-table-frame overflow-x-auto">
+                <table className="ams-table" style={{ minWidth: 840 }}>
+                  <thead><tr>{["Date", "Movement", "Project/Location", "Address", "Responsible person", "Reason", "Held"].map((h) => <th key={h} style={{ textAlign: h === "Held" ? "right" : "left" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {[...chain].reverse().map((m, i) => {
+                      const first = m.kind === "register";
+                      return (
+                        <tr key={`${m.ts}-${i}`} style={{ verticalAlign: "top" }}>
+                          <td style={{ fontFamily: MONO, fontSize: 12, whiteSpace: "nowrap" }}>{fmt(m.date)}</td>
+                          <td style={{ whiteSpace: "nowrap" }}>{first ? "Initial placement" : "Transfer"}</td>
+                          <td>{m.move ? <Changed to={projectText(m.move.project)} from={first ? "" : m.move.fromProject && projectText(m.move.fromProject)} /> : "—"}</td>
+                          <td>{m.move ? <Changed to={m.move.toLoc} from={first ? "" : m.move.fromLoc} /> : "—"}</td>
+                          <td>{m.move ? <Changed to={m.move.toPer} from={first ? "" : m.move.fromPer} /> : "—"}</td>
+                          <td>
+                            <div>{m.move?.why || m.text}</div>
+                            {m.recordedBy && <div className="ams-from">Recorded by {m.recordedBy}</div>}
+                          </td>
+                          <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                            <div style={{ fontFamily: MONO, fontSize: 12.5 }}>{plural(m.days, "day")}</div>
+                            {m.current && <div className="ams-current">current</div>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>}
+
+          {tab === "repairs" && (tickets.length === 0 ? <EmptyTab>No repairs recorded</EmptyTab> : (
+            <div className="ams-table-frame overflow-x-auto">
+              <table className="ams-table" style={{ minWidth: 620 }}>
+                <thead><tr>{["Ticket", "Fault", "Reported", "Status", "Total cost"].map((h) => <th key={h} style={{ textAlign: h === "Total cost" ? "right" : "left" }}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {tickets.map((t) => {
+                    const st = t.closed ? { label: "Closed", color: C.retired, tint: TINT.idle } : { label: STAGES[t.stage].avail, color: STAGES[t.stage].color, tint: STAGES[t.stage].tint };
+                    return (
+                      <tr key={t.id} className="ams-row-link" tabIndex={0} onClick={() => onAction("ticket", t.id)}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onAction("ticket", t.id); } }}>
+                        <td><RecordTag>{t.ticket}</RecordTag></td>
+                        <td>{t.fault}</td>
+                        <td style={{ fontFamily: MONO, fontSize: 12, whiteSpace: "nowrap" }}>{fmt(t.date)}</td>
+                        <td><Chip color={st.color} tint={st.tint}>{st.label}</Chip></td>
+                        <td style={{ fontFamily: MONO, textAlign: "right", whiteSpace: "nowrap" }}>{peso(repairTotal(t))}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr><td colSpan={4} className="ams-tfoot-label">All repairs to date</td><td style={{ fontFamily: MONO, fontWeight: 700, textAlign: "right", whiteSpace: "nowrap" }}>{peso(repairSpend)}</td></tr>
+                </tfoot>
+              </table>
+            </div>
+          ))}
+
+          {tab === "maintenance" && <>
+            {can("maintenance.manage") && (
+              <div className="ams-tab-bar" style={{ justifyContent: "flex-end" }}>
+                <Btn small icon={Plus} onClick={() => onAction("schedule")}>Add schedule</Btn>
+              </div>
+            )}
+            {plans.length === 0 ? <EmptyTab>No maintenance scheduled</EmptyTab> : (
+              <div className="ams-table-frame overflow-x-auto">
+                <table className="ams-table" style={{ minWidth: 700 }}>
+                  <thead><tr>{["Maintenance", "Repeat", "Next due", "Provider or office", "Spent", ""].map((h, i) => <th key={i} style={{ textAlign: h === "Spent" ? "right" : "left" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {plans.map((p) => {
+                      const d = daysUntil(p.nextDue);
+                      const due = dueOf(p);
+                      return (
+                        <tr key={p.id} style={{ verticalAlign: "top" }}>
+                          <td style={{ fontWeight: 500 }}>{p.name}</td>
+                          <td style={{ whiteSpace: "nowrap" }}>{cap(everyLabel(p))}</td>
+                          <td style={{ whiteSpace: "nowrap" }}>
+                            <div style={{ fontFamily: MONO, fontSize: 12 }}>{fmt(p.nextDue)}</div>
+                            <div style={{ fontSize: 11.5, fontWeight: 600, color: due.color }}>
+                              {d < 0 ? `${plural(-d, "day")} overdue` : d === 0 ? "Due today" : `In ${plural(d, "day")}`}
+                            </div>
+                          </td>
+                          <td>{p.provider || <span className="ams-dl-empty">Not recorded</span>}</td>
+                          <td style={{ fontFamily: MONO, textAlign: "right", whiteSpace: "nowrap" }}>{peso(planSpend(p))}</td>
+                          <td style={{ textAlign: "right" }}>
+                            {can("maintenance.manage") && <Btn small icon={CalendarCheck} onClick={() => onAction("logPlan", p.id)}>Record completion</Btn>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>}
+        </div>
+      </aside>
+    </>
   );
 }
 
@@ -6138,10 +6453,10 @@ function RepairBoard({ repairs, assets, onOpen, showClosed, setShowClosed }) {
               {list.map((r) => { const a = aOf(r); const parts = r.parts || []; const got = parts.filter((p) => p.state === "Purchased").length;
                 return (
                   <button key={r.id} onClick={() => onOpen(r.id)} className="text-left px-3 py-3" style={{ background: C.surface, border: `1px solid ${C.rule}`, borderRadius: 2 }}>
-                    <div className="flex items-center justify-between" style={{ fontFamily: MONO, fontSize: 10.5, letterSpacing: "0.1em", color: C.mute }}>
-                      <span>{r.ticket}</span><span>DAY {daysSince(r.date)}</span>
+                    <div className="flex items-center justify-between gap-2" style={{ fontFamily: MONO, fontSize: 10.5, letterSpacing: "0.1em", color: C.mute }}>
+                      <RecordTag>{r.ticket}</RecordTag><span>DAY {daysSince(r.date)}</span>
                     </div>
-                    <div className="mt-1 uppercase" style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em" }}>{a.tag}</div>
+                    <div className="mt-2 uppercase" style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em" }}>{a.tag}</div>
                     <div className="truncate" style={{ fontSize: 13.5 }}>{a.name}</div>
                     <div className="mt-1" style={{ fontSize: 12.5, color: C.mute, lineHeight: 1.4 }}>{r.fault}</div>
                     {(parts.length > 0 || repairTotal(r) > 0) && (
@@ -6166,7 +6481,7 @@ function RepairBoard({ repairs, assets, onOpen, showClosed, setShowClosed }) {
           {closed.map((r) => { const a = aOf(r);
             return (
               <button key={r.id} onClick={() => onOpen(r.id)} className="w-full text-left px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-1" style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
-                <span style={{ fontFamily: MONO, fontSize: 11, color: C.mute }}>{r.ticket}</span>
+                <RecordTag>{r.ticket}</RecordTag>
                 <span className="uppercase" style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700 }}>{a.tag}</span>
                 <span style={{ fontSize: 13.5, flex: 1, minWidth: 120 }}>{r.fault}</span>
                 <span style={{ fontSize: 12.5, color: C.mute }}>closed {fmt(r.closedOn)}</span>
@@ -6193,15 +6508,15 @@ function RepairDetail({ job, asset, history = [], onBack, onAct, onPartAct, onVi
   const idx = STAGE_ORDER.indexOf(stage);
 
   return (
-    <div style={{ background: C.surface, border: `1px solid ${C.rule}`, borderRadius: 2 }}>
+    <div className="ams-slide-in" style={{ background: C.surface, border: `1px solid ${C.rule}`, borderRadius: 12, overflow: "hidden" }}>
       <div className="px-5 pt-4 pb-4">
         <button onClick={onBack} className="flex items-center gap-1 mb-3" style={{ fontSize: 13, color: C.mute }}><ChevronLeft size={15} />Repair board</button>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div style={{ fontFamily: MONO, fontSize: 11, letterSpacing: "0.14em", color: C.mute }}>{job.ticket}</div>
-            <button onClick={onOpenAsset} className="text-left">
-              <div style={{ fontFamily: MONO, fontSize: 24, fontWeight: 700, letterSpacing: "0.06em", lineHeight: 1.15 }}>{a.tag}</div>
-              <div style={{ fontSize: 16 }}>{a.name}</div>
+            <RecordTag>{job.ticket}</RecordTag>
+            <button onClick={onOpenAsset} className="text-left block mt-2">
+              <RecordTag big>{a.tag}</RecordTag>
+              <div style={{ fontSize: 16, fontWeight: 600, marginTop: 6, color: C.head }}>{a.name}</div>
             </button>
           </div>
           {stage ? <Chip color={STAGES[stage].color} tint={STAGES[stage].tint} big>{STAGES[stage].label}</Chip>
@@ -6471,7 +6786,7 @@ function MaintenanceChoiceModal({ lockedAssetTag = "", initialAssetTag = "", ini
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6" style={{ background: "rgba(25,28,39,0.45)" }}>
+    <div className="ams-scrim fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6">
       <div className="relative w-full" style={{ maxWidth: MAINTENANCE_MODAL_W }}>
       <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
         className="w-full flex flex-col" style={{ height: MAINTENANCE_MODAL_H, background: C.surface, borderRadius: 2, border: `1px solid ${C.rule}`, outline: "none" }}>
@@ -6828,8 +7143,8 @@ function MaintenanceTab({ plans, assets, onAdd, onLog, onEdit, onDelete, onOpenA
           <div key={p.id} style={{ borderBottom: `1px solid ${C.ruleSoft}`, borderLeft: `3px solid ${d.color}` }}>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
               <button onClick={() => onOpenAsset(p.assetId)} className="text-left" style={{ minWidth: 118 }}>
-                <div className="uppercase" style={{ fontFamily: MONO, fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em" }}>{a.tag}</div>
-                <div className="truncate" style={{ fontSize: 12.5, color: C.mute, maxWidth: 170 }}>{a.name}</div>
+                <RecordTag>{a.tag}</RecordTag>
+                <div className="truncate" style={{ fontSize: 12.5, color: C.mute, maxWidth: 170, marginTop: 3 }}>{a.name}</div>
               </button>
               <div className="flex-1" style={{ minWidth: 170 }}>
                 <div style={{ fontSize: 14 }}>{p.name}</div>
@@ -7049,7 +7364,7 @@ function FullReports({ assets, repairs, plans, ctx, csv, openJob }) {
           {rows.length === 0 && <tr><td colSpan={12} style={{ padding: "40px 10px", textAlign: "center", color: C.mute, fontSize: 13.5 }}>No assets match this query. Loosen a filter to widen it.</td></tr>}
           {rows.map((r) => (
             <tr key={r.id} style={{ borderBottom: `1px solid ${C.ruleSoft}` }}>
-              <td style={{ padding: "8px 10px", fontFamily: MONO, fontSize: 12, fontWeight: 700 }}>{r.tag}</td>
+              <td style={{ padding: "8px 10px" }}><RecordTag>{r.tag}</RecordTag></td>
               <td style={{ padding: "8px 10px", fontFamily: MONO, fontSize: 11.5, color: C.mute }}>{r.code || "—"}</td>
               <td style={{ padding: "8px 10px", fontSize: 13.5 }}>{r.name}</td>
               <td style={{ padding: "8px 10px", fontSize: 13, color: C.mute }}>{r.company || "—"}</td>
