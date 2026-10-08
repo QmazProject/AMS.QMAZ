@@ -1,75 +1,78 @@
 @import "tailwindcss";
 
 /* ---------------------------------------------------------------------
-   Heavy-equipment scheme: black machine body, equipment-yellow markings.
+   Huemint dark scheme, from the reference build's ui-base.
 
    The whole palette lives in this one block. Components reference the
    tokens through var(), so re-skinning the product is a change here and
-   nowhere else - previously the same colours were spelled out as literals
-   across five files, which is why every restyle meant a sweep.
+   nowhere else.
 
-   Yellow is the marking colour, not a surface and not the text: it carries
-   the brand, the active rail, the primary action and focus, exactly the way a
-   machine wears its decals. Black carries everything structural, and white
-   carries the information.
+   Four colours carry the identity: the slate ground #2D3332, the pale text
+   #EFF3E9, sand #D7BD89 for primary actions and selection, and red #DC2D26,
+   which is kept to stripes and fills - the active module's bar, the edge of
+   a record number - and never used as text on the dark ground, where it
+   measures 2.7:1.
    --------------------------------------------------------------------- */
 :root {
-  /* machine body */
-  --ams-bg: #0b0d0f;
-  --ams-rail: #0e1013;
-  --ams-surface: #14171b;
-  --ams-surface-2: #1b1f24;
-  --ams-well: #1e242c;
-  --ams-line: #2c323a;
-  --ams-line-soft: #1f242a;
+  /* ground and surfaces */
+  --ams-bg: #2d3332;
+  --ams-rail: #252a29;
+  --ams-surface: #343a39;
+  --ams-surface-2: #3a4140;
+  --ams-well: #272c2b;
+  --ams-line: #4a5352;
+  --ams-line-soft: #3f4746;
 
-  /* equipment yellow */
-  --ams-yellow: #ffcd11;
-  --ams-yellow-hi: #ffe04d;
-  --ams-yellow-lift: #ffea85;
-  --ams-yellow-deep: #d9a800;
-  --ams-yellow-dim: #8a6f0c;
-  --ams-on-yellow: #0b0d0f;
-  /* Gold as ink rather than as a fill. On black it is the yellow itself; on
-     a white surface that measures 1.5:1, so the light scope swaps in a deep
-     gold and every component keeps asking for the same role. */
-  --ams-gold-ink: #ffcd11;
+  /* sand: primary actions, selection and focus */
+  --ams-sand: #d7bd89;
+  --ams-sand-hi: #e2cc9f;
+  --ams-sand-lift: #ebdab6;
+  --ams-sand-deep: #bea36d;
+  --ams-sand-dim: #8a7650;
+  --ams-on-sand: #2d3332;
+  /* sand as ink rather than as a fill - 6.2:1 on a card */
+  --ams-sand-ink: #d7bd89;
 
-  /* Information ramp. Neutral, faintly cooled so it settles against the black
-     without turning blue. Yellow is deliberately absent here: when the same
-     gold carried the brand, the headings, the values and the active state at
-     once, none of them could be made to stand out. Text is now white, and
-     yellow marks only what deserves attention.
+  /* red: stripes and fills only */
+  --ams-red: #dc2d26;
+  --ams-red-hi: #e8524c;
+  --ams-red-deep: #b8231d;
 
-     Ratios are against the panel #14171b, where most reading happens. The old
-     label colour measured 3.65:1 at 11px and failed AA outright. */
-  --ams-text: #e9edf2;  /* primary   15.3:1 */
-  --ams-head: #ffffff;  /* headings  18.0:1 */
-  --ams-mute: #a8b2bf;  /* secondary  8.4:1 */
-  --ams-dim: #8c97a5;   /* labels     6.1:1 */
+  /* Information ramp. Ratios are against the card #343a39, where most
+     reading happens. */
+  --ams-text: #eff3e9;  /* primary   10.0:1 */
+  --ams-head: #f8faf4;  /* headings  10.9:1 */
+  --ams-mute: #bac2b8;  /* secondary  6.2:1 */
+  --ams-dim: #a3aca4;   /* labels     4.8:1 */
 
-  /* machine states, read off a gauge cluster */
-  --ams-ok: #7fd455;
-  --ams-warn: #ff8a1f;
-  --ams-alarm: #ff5247;
-  --ams-info: #55a8f0;
-  --ams-idle: #7e8794;
+  /* availability, brightened for the dark ground */
+  --ams-ok: #4caf7a;    /* Active */
+  --ams-alarm: #e5544c; /* For repair */
+  --ams-warn: #e0a23a;  /* Awaiting parts */
+  --ams-info: #5b9be0;  /* Ongoing repair */
+  --ams-test: #a88be8;  /* Under testing */
+  --ams-idle: #8e9792;  /* Retired */
 
-  --ams-yellow-tint: rgba(255, 205, 17, 0.15);
-  --ams-ok-tint: rgba(127, 212, 85, 0.15);
-  --ams-warn-tint: rgba(255, 138, 31, 0.15);
-  --ams-alarm-tint: rgba(255, 82, 71, 0.15);
-  --ams-info-tint: rgba(85, 168, 240, 0.15);
-  --ams-idle-tint: rgba(126, 135, 148, 0.15);
+  --ams-sand-tint: rgba(215, 189, 137, 0.16);
+  --ams-ok-tint: rgba(76, 175, 122, 0.16);
+  --ams-warn-tint: rgba(224, 162, 58, 0.16);
+  --ams-alarm-tint: rgba(229, 84, 76, 0.16);
+  --ams-info-tint: rgba(91, 155, 224, 0.16);
+  --ams-test-tint: rgba(168, 139, 232, 0.16);
+  --ams-idle-tint: rgba(142, 151, 146, 0.16);
+
+  /* the light plate a record number sits on */
+  --ams-plate: #eff3e9;
+  --ams-on-plate: #2d3332;
 
   /* caution striping - reserved for genuinely critical edges */
   --ams-hazard: repeating-linear-gradient(
     45deg,
-    #ffcd11 0 9px,
-    #0b0d0f 9px 18px
+    #dc2d26 0 9px,
+    #2d3332 9px 18px
   );
 
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   color: var(--ams-text);
   background: var(--ams-bg);
   color-scheme: dark;
@@ -87,9 +90,12 @@ body,
   margin: 0;
 }
 
+/* The 13.5px base is set on the body, not the root: Tailwind's spacing is in
+   rem, and shrinking the root would shrink every gap and padding with it. */
 body {
   min-height: 100vh;
   background: var(--ams-bg);
+  font-size: 13.5px;
 }
 
 button,
@@ -99,7 +105,7 @@ textarea {
   font: inherit;
 }
 
-/* native controls follow the machine body rather than the OS default */
+/* native controls follow the dark ground rather than the OS default */
 input,
 select,
 textarea {

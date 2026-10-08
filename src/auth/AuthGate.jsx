@@ -6,7 +6,7 @@ import { ROUTES, navigate, usePath } from '../router.js'
 
 const CenterMessage = ({ title, children, action }) => (
   <main className="min-h-screen flex items-center justify-center p-6" style={{ background: 'var(--ams-bg)', color: 'var(--ams-text)' }}>
-    <div className="w-full p-6 text-center" style={{ maxWidth: 480, background: 'var(--ams-surface)', border: '1px solid var(--ams-line)', borderTop: '3px solid var(--ams-yellow)' }}>
+    <div className="w-full p-6 text-center" style={{ maxWidth: 480, background: 'var(--ams-surface)', border: '1px solid var(--ams-line)', borderTop: '3px solid var(--ams-sand)' }}>
       <AlertTriangle size={25} style={{ color: 'var(--ams-alarm)', margin: '0 auto 10px' }} />
       <h1 style={{ fontSize: 17, fontWeight: 650 }}>{title}</h1>
       <div style={{ color: 'var(--ams-mute)', fontSize: 13.5, marginTop: 7, lineHeight: 1.5 }}>{children}</div>
@@ -32,13 +32,13 @@ function PasswordRecovery({ onComplete }) {
   }
   return (
     <main className="min-h-screen flex items-center justify-center p-6" style={{ background: 'var(--ams-bg)', color: 'var(--ams-text)' }}>
-      <form onSubmit={submit} className="w-full p-6" style={{ maxWidth: 390, background: 'var(--ams-surface)', border: '1px solid var(--ams-line)', borderTop: '3px solid var(--ams-yellow)' }}>
+      <form onSubmit={submit} className="w-full p-6" style={{ maxWidth: 390, background: 'var(--ams-surface)', border: '1px solid var(--ams-line)', borderTop: '3px solid var(--ams-sand)' }}>
         <h1 style={{ fontSize: 18, fontWeight: 650 }}>Choose a new password</h1>
         <p className="mb-4" style={{ color: 'var(--ams-mute)', fontSize: 13 }}>This recovery session is temporary. Set the password before continuing.</p>
         {error && <div className="mb-3 p-3" style={{ background: 'var(--ams-alarm-tint)', color: 'var(--ams-alarm)', fontSize: 13 }}>{error}</div>}
         <input type="password" required minLength={8} autoComplete="new-password" placeholder="New password" value={password} onChange={(event) => setPassword(event.target.value)} className="w-full mb-3 px-3 py-2" style={{ border: '1px solid var(--ams-line)' }} />
         <input type="password" required minLength={8} autoComplete="new-password" placeholder="Confirm new password" value={confirm} onChange={(event) => setConfirm(event.target.value)} className="w-full mb-4 px-3 py-2" style={{ border: '1px solid var(--ams-line)' }} />
-        <button type="submit" disabled={busy} className="w-full py-2.5" style={{ background: 'linear-gradient(180deg,var(--ams-yellow-hi) 0%,var(--ams-yellow) 44%,var(--ams-yellow-deep) 100%)', color: 'var(--ams-on-yellow)', border: '1px solid var(--ams-yellow-deep)', fontWeight: 800, opacity: busy ? .55 : 1 }}>{busy ? 'Updating…' : 'Update password'}</button>
+        <button type="submit" disabled={busy} className="w-full py-2.5" style={{ background: 'var(--ams-sand)', color: 'var(--ams-on-sand)', border: '1px solid var(--ams-sand)', borderRadius: 10, fontWeight: 600, opacity: busy ? .55 : 1 }}>{busy ? 'Updating…' : 'Update password'}</button>
       </form>
     </main>
   )
