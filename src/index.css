@@ -39,7 +39,7 @@
   --ams-red-deep: #b8231d;
 
   /* Information ramp. Ratios are against the card #353c3b, where most
-     reading happens. *
+     reading happens. */
   --ams-text: #eff3e9;  /* primary   10.0:1 */
   --ams-head: #f8faf4;  /* headings  10.9:1 */
   --ams-mute: #bac2b8;  /* secondary  6.2:1 */
