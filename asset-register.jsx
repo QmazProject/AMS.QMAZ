@@ -4860,7 +4860,10 @@ function AssetMap({ assets, projects, companies, categoryNames, openJob, onOpenA
                  back round the colour wheel so water stays blue, then
                  desaturated and dimmed. Controls and summaries are restyled
                  as the rest of the chrome. */
-              .ams-map.leaflet-container{background:#232827;font-family:${SANS}}
+              /* isolate keeps Leaflet's own layer order (panes up to z-index
+                 1000) inside the map, so markers and zoom buttons never draw
+                 over the sticky top bar or the phone's bottom bar */
+              .ams-map.leaflet-container{isolation:isolate;background:#232827;font-family:${SANS}}
               .ams-map .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.86) contrast(.9) saturate(.35)}
               .ams-map .leaflet-bar{overflow:hidden;border:1px solid var(--ams-line)!important;border-radius:10px;box-shadow:0 8px 22px rgba(0,0,0,.35)}
               .ams-map .leaflet-bar a{width:32px;height:32px;line-height:30px;border-bottom:1px solid var(--ams-line);background:var(--ams-surface);color:var(--ams-text);transition:background 160ms ease,color 160ms ease}
